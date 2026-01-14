@@ -20,6 +20,12 @@ All of the coding rules below are of utmost importance and following them is mor
 - NO "try except" / "try except" blocks - just let it crash
 - ALWAYS use default data types if they can replace the ones in typing (examples: `list` instead of `List`, `dict` instead of `Dict`)
 - Variables in typescript/javascript have snake_case names
+do not use comments such as 
+-- ============================================================================
+-- Geometry: Polycarbonate Tube
+-- ============================================================================
+divide things simply by a line if you have to 
+-- ===========================
 
 ## Editing frontend code
 The frontend is a minimal website/Tauri webview using latest, but widely supported rendering features, leveraging the extensive optimization of modern browser. 
