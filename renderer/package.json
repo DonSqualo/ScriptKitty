@@ -1,0 +1,19 @@
+{
+  "name": "scriptcad-renderer",
+  "version": "0.1.0",
+  "description": "WebGL renderer for ScriptCAD using Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}

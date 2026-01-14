@@ -1,0 +1,39 @@
+[package]
+name = "scriptcad-server"
+version = "0.1.0"
+edition = "2021"
+description = "Development server for ScriptCAD with file watching and Lua execution"
+
+[dependencies]
+# Web server
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+tokio = { version = "1", features = ["full"] }
+
+# WebSocket
+tokio-tungstenite = "0.21"
+futures = "0.3"
+
+# File watching
+notify = "6.1"
+notify-debouncer-mini = "0.4"
+
+# Lua interpreter
+mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+clap = { version = "4.4", features = ["derive"] }
+
+# CSG geometry
+csgrs = "0.20"
+
+[profile.release]
+lto = true
+codegen-units = 1
