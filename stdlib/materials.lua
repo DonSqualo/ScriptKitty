@@ -64,6 +64,67 @@ Materials.database = {
     permittivity = 80,
     speed_of_sound = 1480,
     viscosity = 0.001,
+    acoustic_impedance = 1.48e6,
+    acoustic_attenuation = 0.002,
+  },
+
+  pzt = {
+    name = "PZT-4 (Lead Zirconate Titanate)",
+    color = {0.6, 0.6, 0.5, 1.0},
+    density = 7500,
+    speed_of_sound = 4000,
+    acoustic_impedance = 30e6,
+    acoustic_attenuation = 0.01,
+    piezo_d33 = 289e-12,
+    piezo_kt = 0.51,
+    permittivity = 1300,
+    youngs_modulus = 80e9,
+  },
+
+  petg = {
+    name = "PETG",
+    color = {0.8, 0.8, 0.85, 0.7},
+    density = 1270,
+    speed_of_sound = 2200,
+    acoustic_impedance = 2.8e6,
+    acoustic_attenuation = 1.5,
+    thermal_conductivity = 0.18,
+    youngs_modulus = 2.1e9,
+  },
+
+  rubber = {
+    name = "Silicone Rubber",
+    color = {0.3, 0.3, 0.35, 1.0},
+    density = 1100,
+    speed_of_sound = 1000,
+    acoustic_impedance = 1.1e6,
+    acoustic_attenuation = 5.0,
+    thermal_conductivity = 0.2,
+    youngs_modulus = 0.01e9,
+  },
+
+  glass = {
+    name = "Borosilicate Glass",
+    color = {0.9, 0.95, 1.0, 0.3},
+    density = 2230,
+    speed_of_sound = 5640,
+    acoustic_impedance = 12.6e6,
+    acoustic_attenuation = 0.01,
+    thermal_conductivity = 1.14,
+    permittivity = 4.6,
+    youngs_modulus = 64e9,
+  },
+
+  polycarbonate = {
+    name = "Polycarbonate",
+    color = {0.85, 0.85, 0.9, 0.6},
+    density = 1200,
+    speed_of_sound = 2270,
+    acoustic_impedance = 2.7e6,
+    acoustic_attenuation = 0.8,
+    thermal_conductivity = 0.2,
+    permittivity = 3.0,
+    youngs_modulus = 2.4e9,
   },
 }
 

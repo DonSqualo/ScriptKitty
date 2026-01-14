@@ -39,7 +39,7 @@ MetalBase = {
 PolyTube = {
   outer_diameter = 30,
   inner_diameter = 26,
-  height = 10,
+  height = 40,
 }
 
 Microscope = {
@@ -67,7 +67,7 @@ Medium = {
 Transducer = {
   diameter = 12,
   thickness = 2,
-  height_from_coverslip = 5,
+  height_from_coverslip = 35,
 }
 
 Lid = {
@@ -104,6 +104,7 @@ MetalBase.model = group("metal_base", { MetalBase.body, MetalBase.lip })
 local coverslip_z = -Coverslip.thickness
 Coverslip.model = cylinder(Coverslip.diameter / 2, Coverslip.thickness)
     :at(0, 0, coverslip_z)
+    :material(material("glass"))
 
 -- ============================================================================
 -- Geometry: O-ring (immediately at z=0, on top of coverslip)
@@ -115,6 +116,7 @@ Oring.model = difference(
       cylinder(Oring.inner_diameter / 2, Oring.thickness)
     )
     :at(0, 0, oring_z)
+    :material(material("rubber"))
 
 -- ============================================================================
 -- Geometry: Polycarbonate Tube (above o-ring)
@@ -127,6 +129,7 @@ PolyTube.model = difference(
       cylinder(PolyTube.inner_diameter / 2, PolyTube.height + 1)
     )
     :at(0, 0, tube_z)
+    :material(material("polycarbonate"))
 
 -- ============================================================================
 -- Assembly: Interchangeable Coverslip Dish (without medium, added later)
@@ -189,10 +192,11 @@ Lid.body = difference(Lid.outer, Lid.inner)
 
 Damper.model = cylinder(Damper.diameter / 2, Damper.height)
     :at(0, 0, damper_z)
-    :material(material("steel"))
+    :material(material("petg"))
 
 Transducer.model = cylinder(Transducer.diameter / 2, Transducer.thickness)
     :at(0, 0, transducer_z)
+    :material(material("pzt"))
 
 Lid.model = group("lid_assembly", {
   Lid.body,
@@ -219,11 +223,70 @@ local assembly = group("pure_acoustics", {
   icd_assembly,
   Medium.model,
   Microscope.model,
-  -- HolderAdapter.model,
+  HolderAdapter.model,
   Lid.model,
 })
 
 ScriptCAD.register(assembly)
+
+-- Export STL for 3D printing (units: mm)
+export_stl("pure_acoustics.stl", assembly)
+
+-- ===========================
+-- Acoustic Simulation
+-- ===========================
+
+Acoustic = {
+  frequency = 1e6,
+  drive_current = 0.1,
+}
+
+local acoustic_study = acoustic({
+  frequency = Acoustic.frequency,
+  drive_current = Acoustic.drive_current,
+  transducer = Transducer.model,
+  medium = Medium.model,
+  boundaries = {
+    acoustic_boundary(Coverslip.model, {
+      type = "impedance",
+      impedance = material("glass").acoustic_impedance,
+    }),
+    acoustic_boundary(PolyTube.model, {
+      type = "impedance",
+      impedance = material("polycarbonate").acoustic_impedance,
+    }),
+    acoustic_boundary(Damper.model, {
+      type = "impedance",
+      impedance = material("petg").acoustic_impedance,
+    }),
+  },
+})
+
+ScriptCAD.register(acoustic_study)
+
+
+-- ===========================
+-- Circuit: Transducer Electronics
+-- ===========================
+
+local transducer_circuit = Circuit({
+  components = {
+    SignalGenerator({ frequency = Acoustic.frequency, amplitude = 1.0 }),
+    Amplifier({ gain = 50 }),
+    MatchingNetwork({
+      impedance_real = 50,
+      impedance_imag = -100,
+      frequency = Acoustic.frequency,
+    }),
+    TransducerLoad({
+      impedance_real = 50,
+      impedance_imag = -100,
+    }),
+  },
+  size = { 400, 90 },
+})
+
+ScriptCAD.register(transducer_circuit)
 
 -- ============================================================================
 -- View Configuration

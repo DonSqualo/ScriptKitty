@@ -113,6 +113,18 @@
       display: block;
     }
 
+    #circuit-overlay {
+      position: absolute;
+      pointer-events: none;
+      z-index: 100;
+      display: none;
+      transform-origin: top left;
+    }
+
+    #circuit-overlay.visible {
+      display: block;
+    }
+
     .scanline {
       position: fixed;
       top: 0;
@@ -151,6 +163,7 @@
     <canvas id="main-canvas"></canvas>
     <div class="tui-label">ScriptKitten</div>
     <div class="tui-status" id="status">CONNECTING...</div>
+    <div id="circuit-overlay"></div>
   </div>
 
   <div id="graph-window" class="tui-window">

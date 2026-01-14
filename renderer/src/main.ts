@@ -27,6 +27,12 @@ let current_mesh: THREE.Mesh | null = null;
 let arrows_group: THREE.Group | null = null;
 let field_plane: THREE.Mesh | null = null;
 
+// Circuit overlay element and 3D anchor
+const circuit_overlay = document.getElementById('circuit-overlay')!;
+const circuit_anchor = new THREE.Vector3(0, 0, 60); // Anchor point above Z axis
+let circuit_visible = false;
+let circuit_width = 400; // Store circuit width for positioning
+
 // Graph canvas (defined in HTML, hidden by default)
 const graph_canvas = document.getElementById('graph-canvas') as HTMLCanvasElement;
 const graph_ctx = graph_canvas.getContext('2d')!;
@@ -105,17 +111,39 @@ axes_group.add(z_label);
 
 scene.add(axes_group);
 
-// Color map function (viridis-like)
+// Color map function (jet - blue to cyan to green to yellow to red)
 function value_to_color(t: number): THREE.Color {
-  // Clamp t to [0, 1]
   t = Math.max(0, Math.min(1, t));
 
-  // Simple viridis-like colormap
-  const r = Math.max(0, Math.min(1, 0.267 + 0.329 * t + 2.0 * t * t - 1.6 * t * t * t));
-  const g = Math.max(0, Math.min(1, 0.004 + 1.4 * t - 0.7 * t * t));
-  const b = Math.max(0, Math.min(1, 0.329 + 0.7 * t - 1.0 * t * t + 0.5 * t * t * t));
+  let r: number, g: number, b: number;
 
-  return new THREE.Color(r, g, b);
+  if (t < 0.125) {
+    r = 0;
+    g = 0;
+    b = 0.5 + t * 4;
+  } else if (t < 0.375) {
+    r = 0;
+    g = (t - 0.125) * 4;
+    b = 1;
+  } else if (t < 0.625) {
+    r = (t - 0.375) * 4;
+    g = 1;
+    b = 1 - (t - 0.375) * 4;
+  } else if (t < 0.875) {
+    r = 1;
+    g = 1 - (t - 0.625) * 4;
+    b = 0;
+  } else {
+    r = 1 - (t - 0.875) * 2;
+    g = 0;
+    b = 0;
+  }
+
+  return new THREE.Color(
+    Math.max(0, Math.min(1, r)),
+    Math.max(0, Math.min(1, g)),
+    Math.max(0, Math.min(1, b))
+  );
 }
 
 // Parse binary mesh
@@ -276,18 +304,27 @@ function create_field_plane(slice: { width: number, height: number, bounds: numb
   const maxMag = Math.max(...Array.from(magnitude));
 
   for (let i = 0; i < width * height; i++) {
-    const t = magnitude[i] / maxMag;
-    const color = value_to_color(t);
+    const mag = magnitude[i];
 
     // Flip Y coordinate for texture
     const row = Math.floor(i / width);
     const col = i % width;
     const flippedIdx = (height - 1 - row) * width + col;
 
-    textureData[flippedIdx * 4] = Math.floor(color.r * 255);
-    textureData[flippedIdx * 4 + 1] = Math.floor(color.g * 255);
-    textureData[flippedIdx * 4 + 2] = Math.floor(color.b * 255);
-    textureData[flippedIdx * 4 + 3] = 200; // Semi-transparent
+    // Make zero-magnitude pixels transparent (outside medium)
+    if (mag < 1e-6 || maxMag < 1e-6) {
+      textureData[flippedIdx * 4] = 0;
+      textureData[flippedIdx * 4 + 1] = 0;
+      textureData[flippedIdx * 4 + 2] = 0;
+      textureData[flippedIdx * 4 + 3] = 0;
+    } else {
+      const t = mag / maxMag;
+      const color = value_to_color(t);
+      textureData[flippedIdx * 4] = Math.floor(color.r * 255);
+      textureData[flippedIdx * 4 + 1] = Math.floor(color.g * 255);
+      textureData[flippedIdx * 4 + 2] = Math.floor(color.b * 255);
+      textureData[flippedIdx * 4 + 3] = 220;
+    }
   }
 
   const texture = new THREE.DataTexture(textureData, width, height, THREE.RGBAFormat);
@@ -391,12 +428,49 @@ function draw_graph(line: { z: Float32Array, bz: Float32Array }) {
   ctx.fillText(`CTR: ${(line.bz[center_idx] * 1000).toFixed(3)} mT`, width - 130, 28);
 }
 
-function update_mesh(buffer: ArrayBuffer) {
-  // Check if this is field data
-  const header = new Uint8Array(buffer, 0, 5);
-  const headerStr = String.fromCharCode(...header);
+// Parse circuit data
+function parse_circuit_data(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  let offset = 8; // Skip "CIRCUIT\0" header
 
-  if (headerStr === 'FIELD') {
+  // Size (width, height)
+  const width = view.getFloat32(offset, true); offset += 4;
+  const height = view.getFloat32(offset, true); offset += 4;
+
+  // SVG length and data
+  const svg_len = view.getUint32(offset, true); offset += 4;
+  const svg_bytes = new Uint8Array(buffer, offset, svg_len);
+  const svg_string = new TextDecoder().decode(svg_bytes);
+
+  return {
+    size: { width, height },
+    svg: svg_string,
+  };
+}
+
+// Display circuit as 2D overlay
+function display_circuit_overlay(circuit: { size: { width: number, height: number }, svg: string }) {
+  circuit_overlay.innerHTML = circuit.svg;
+  circuit_overlay.classList.add('visible');
+  circuit_visible = true;
+  circuit_width = circuit.size.width;
+}
+
+function update_mesh(buffer: ArrayBuffer) {
+  // Check header to determine data type
+  const header = new Uint8Array(buffer, 0, 8);
+  const header_5 = String.fromCharCode(...header.slice(0, 5));
+  const header_8 = String.fromCharCode(...header);
+
+  // Handle circuit data
+  if (header_8 === 'CIRCUIT\0') {
+    const circuit_data = parse_circuit_data(buffer);
+    console.log(`Circuit data: ${circuit_data.size.width}x${circuit_data.size.height}`);
+    display_circuit_overlay(circuit_data);
+    return;
+  }
+
+  if (header_5 === 'FIELD') {
     // Parse and display field data
     const fieldData = parse_field_data(buffer);
     console.log(`Field data: ${fieldData.slice.width}x${fieldData.slice.height} slice, ${fieldData.arrows.positions.length / 3} arrows`);
@@ -411,15 +485,19 @@ function update_mesh(buffer: ArrayBuffer) {
       field_plane = null;
     }
 
-    // Create new visualizations
-    arrows_group = create_arrow_field(fieldData.arrows);
-    scene.add(arrows_group);
+    // Create arrow field only if there are arrows
+    if (fieldData.arrows.positions.length > 0) {
+      arrows_group = create_arrow_field(fieldData.arrows);
+      scene.add(arrows_group);
+    }
 
     field_plane = create_field_plane(fieldData.slice);
     scene.add(field_plane);
 
-    // Draw 1D graph
-    draw_graph(fieldData.line);
+    // Draw 1D graph only if there's line data
+    if (fieldData.line.z.length > 0) {
+      draw_graph(fieldData.line);
+    }
 
     return;
   }
@@ -443,6 +521,10 @@ function update_mesh(buffer: ArrayBuffer) {
     scene.remove(field_plane);
     field_plane = null;
   }
+  // Hide circuit overlay
+  circuit_overlay.classList.remove('visible');
+  circuit_overlay.innerHTML = '';
+  circuit_visible = false;
   // Hide graph window
   graph_window.classList.remove('visible');
 
@@ -486,10 +568,34 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
+// Update circuit overlay position and scale based on 3D anchor
+function update_circuit_position() {
+  if (!circuit_visible) return;
+
+  // Project 3D anchor point to screen coordinates
+  const projected = circuit_anchor.clone().project(camera);
+
+  // Convert from normalized device coords to screen pixels
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  const x = (projected.x * 0.5 + 0.5) * w;
+  const y = (-projected.y * 0.5 + 0.5) * h;
+
+  // Calculate scale based on camera distance to orbit target (zoom-only, not rotation)
+  const zoom_distance = camera.position.distanceTo(controls.target);
+  const scale = Math.max(0.5, Math.min(3.0, 160 / zoom_distance));
+
+  // Position circuit to the LEFT of the anchor (right edge at anchor)
+  circuit_overlay.style.left = `${x - circuit_width * scale - 20}px`;
+  circuit_overlay.style.top = `${y}px`;
+  circuit_overlay.style.transform = `scale(${scale})`;
+}
+
 // Render loop
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  update_circuit_position();
   renderer.render(scene, camera);
 }
 

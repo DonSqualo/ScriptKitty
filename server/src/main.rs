@@ -21,6 +21,9 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
+mod acoustic;
+mod circuit;
+mod export;
 mod field;
 mod geometry;
 
@@ -28,6 +31,7 @@ struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
     current_mesh: RwLock<Option<Vec<u8>>>,
     current_field: RwLock<Option<Vec<u8>>>,
+    current_circuit: RwLock<Option<Vec<u8>>>,
 }
 
 #[tokio::main]
@@ -40,7 +44,7 @@ async fn main() -> Result<()> {
     info!("Watching: {:?}", file_path);
 
     let (mesh_tx, _) = broadcast::channel::<Vec<u8>>(16);
-    let (lua_tx, lua_rx) = mpsc::unbounded_channel::<String>();
+    let (lua_tx, lua_rx) = mpsc::unbounded_channel::<(String, PathBuf)>();
     let (result_tx, mut result_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
     // Lua processing thread (Manifold needs to run on same thread)
@@ -52,17 +56,21 @@ async fn main() -> Result<()> {
         mesh_tx: mesh_tx.clone(),
         current_mesh: RwLock::new(None),
         current_field: RwLock::new(None),
+        current_circuit: RwLock::new(None),
     });
 
-    // Handle mesh/field results
+    // Handle mesh/field/circuit results
     let state_clone = state.clone();
     tokio::spawn(async move {
         while let Some(data) = result_rx.recv().await {
-            // Check if this is field data (starts with "FIELD")
+            // Check data type by header
             let is_field = data.len() >= 5 && &data[0..5] == b"FIELD";
+            let is_circuit = data.len() >= 8 && &data[0..8] == b"CIRCUIT\0";
 
             if is_field {
                 *state_clone.current_field.write().await = Some(data.clone());
+            } else if is_circuit {
+                *state_clone.current_circuit.write().await = Some(data.clone());
             } else {
                 *state_clone.current_mesh.write().await = Some(data.clone());
             }
@@ -73,7 +81,7 @@ async fn main() -> Result<()> {
     // Load initial file
     if file_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&file_path) {
-            let _ = lua_tx.send(content);
+            let _ = lua_tx.send((content, file_path.clone()));
         }
     }
 
@@ -98,7 +106,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn process_lua_files(mut rx: mpsc::UnboundedReceiver<String>, tx: mpsc::UnboundedSender<Vec<u8>>) {
+fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mpsc::UnboundedSender<Vec<u8>>) {
     let lua = mlua::Lua::new();
 
     // Set up package path to include stdlib directory
@@ -114,18 +122,24 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<String>, tx: mpsc::Unbounde
         let _ = package.set("path", new_path);
     }
 
-    while let Some(content) = rx.blocking_recv() {
+    while let Some((content, file_path)) = rx.blocking_recv() {
         // Process mesh
         match process_single_file(&lua, &content) {
-            Ok(mesh_data) => {
-                let binary = mesh_data.to_binary();
+            Ok(result) => {
+                let binary = result.mesh.to_binary();
                 info!(
                     "Generated mesh: {} vertices, {} triangles, {} bytes",
-                    mesh_data.positions.len() / 3,
-                    mesh_data.indices.len() / 3,
+                    result.mesh.positions.len() / 3,
+                    result.mesh.indices.len() / 3,
                     binary.len()
                 );
                 let _ = tx.send(binary);
+
+                // Process exports
+                if !result.exports.is_empty() {
+                    let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
+                    export::process_exports(&result.exports, &result.mesh, base_dir);
+                }
             }
             Err(e) => error!("Lua error: {}", e),
         }
@@ -143,6 +157,24 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<String>, tx: mpsc::Unbounde
             );
             let _ = tx.send(field_binary);
         }
+
+        // Try to compute acoustic field if this has acoustic study
+        if let Some(acoustic_data) = try_compute_acoustic_field(&lua, &content) {
+            let acoustic_binary = acoustic_data.to_binary();
+            info!(
+                "Generated acoustic field: {}x{} slice, {} bytes",
+                acoustic_data.slice_width,
+                acoustic_data.slice_height,
+                acoustic_binary.len()
+            );
+            let _ = tx.send(acoustic_binary);
+        }
+
+        // Try to generate circuit diagram
+        if let Some(circuit_binary) = try_generate_circuit(&lua, &content) {
+            info!("Generated circuit diagram: {} bytes", circuit_binary.len());
+            let _ = tx.send(circuit_binary);
+        }
     }
 }
 
@@ -154,7 +186,7 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
 
     // Execute the Lua to get config values
     let result: mlua::Value = lua.load(content).eval().ok()?;
-    let table = result.as_table()?;
+    let _table = result.as_table()?;
 
     // Try to extract Helmholtz parameters from globals or return value
     // The config table should be accessible after running the script
@@ -196,7 +228,78 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
     ))
 }
 
-fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<geometry::MeshData> {
+fn try_compute_acoustic_field(lua: &mlua::Lua, content: &str) -> Option<acoustic::AcousticFieldData> {
+    if !content.contains("acoustic(") && !content.contains("Acoustic") {
+        return None;
+    }
+
+    let result: mlua::Value = lua.load(content).eval().ok()?;
+    let _table = result.as_table()?;
+
+    let globals = lua.globals();
+
+    let acoustic_table: mlua::Table = globals.get("Acoustic").ok()?;
+    let frequency: f64 = acoustic_table.get("frequency").unwrap_or(1e6);
+    let drive_current: f64 = acoustic_table.get("drive_current").unwrap_or(0.1);
+
+    let transducer: mlua::Table = globals.get("Transducer").ok()?;
+    let transducer_diameter: f64 = transducer.get("diameter").unwrap_or(12.0);
+    let transducer_height: f64 = transducer.get("height_from_coverslip").unwrap_or(5.0);
+
+    let poly_tube: mlua::Table = globals.get("PolyTube").ok()?;
+    let inner_diameter: f64 = poly_tube.get("inner_diameter").unwrap_or(26.0);
+
+    let medium: mlua::Table = globals.get("Medium").ok()?;
+    let liquid_height: f64 = medium.get("liquid_height").unwrap_or(8.0);
+
+    info!(
+        "Computing acoustic field: f={:.0} Hz, transducer r={:.1}mm at z={:.1}mm",
+        frequency, transducer_diameter / 2.0, transducer_height
+    );
+
+    let config = acoustic::AcousticConfig {
+        frequency,
+        transducer_radius: transducer_diameter / 2.0,
+        transducer_z: transducer_height,
+        medium_radius: inner_diameter / 2.0 - 0.1,
+        medium_height: liquid_height,
+        speed_of_sound: 1480.0 * 1000.0,
+        drive_amplitude: drive_current * 100.0,
+    };
+
+    Some(acoustic::compute_acoustic_field(&config))
+}
+
+fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<Vec<u8>> {
+    if !content.contains("Circuit") {
+        return None;
+    }
+
+    let result: mlua::Value = lua.load(content).eval().ok()?;
+    let table = result.as_table()?;
+
+    let circuit_table: mlua::Table = table.get("circuit").ok()?;
+    let circuit_type: String = circuit_table.get("type").ok()?;
+
+    if circuit_type != "circuit" {
+        return None;
+    }
+
+    match circuit::generate_circuit_from_lua(lua, &circuit_table) {
+        Ok(circuit_data) => Some(circuit::serialize_circuit(&circuit_data)),
+        Err(e) => {
+            error!("Circuit generation error: {}", e);
+            None
+        }
+    }
+}
+
+struct ProcessResult {
+    mesh: geometry::MeshData,
+    exports: Vec<export::ExportRequest>,
+}
+
+fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<ProcessResult> {
     // Clear scene state before each execution to prevent accumulation
     let _ = lua.load(r#"
         local loaded = package.loaded["stdlib"] or package.loaded["stdlib.init"]
@@ -204,10 +307,19 @@ fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<geometry::MeshD
     "#).exec();
 
     let result: mlua::Value = lua.load(content).eval()?;
-    geometry::generate_mesh_from_lua(lua, &result)
+    let mesh = geometry::generate_mesh_from_lua(lua, &result)?;
+
+    // Parse export requests
+    let exports = if let Some(table) = result.as_table() {
+        export::parse_exports(table)
+    } else {
+        Vec::new()
+    };
+
+    Ok(ProcessResult { mesh, exports })
 }
 
-async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<String>) {
+async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>) {
     let (notify_tx, mut notify_rx) = mpsc::channel::<PathBuf>(10);
 
     let mut debouncer = new_debouncer(Duration::from_millis(200), move |res: DebounceEventResult| {
@@ -228,7 +340,7 @@ async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<String>) {
         if changed == path || changed.file_name() == path.file_name() {
             if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 info!("File changed, regenerating mesh...");
-                let _ = tx.send(content);
+                let _ = tx.send((content, path.clone()));
             }
         }
     }
@@ -250,6 +362,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     // Send current field if available
     if let Some(field) = state.current_field.read().await.clone() {
         let _ = sender.send(Message::Binary(field.into())).await;
+    }
+
+    // Send current circuit if available
+    if let Some(circuit) = state.current_circuit.read().await.clone() {
+        let _ = sender.send(Message::Binary(circuit.into())).await;
     }
 
     loop {

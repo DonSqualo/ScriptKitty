@@ -138,6 +138,57 @@ function Physics.structural(config)
   return study
 end
 
+--- Acoustic pressure/energy study
+-- @param config {frequency, drive_current, transducer, medium, boundaries}
+-- @return Acoustic study
+function Physics.acoustic(config)
+  config = config or {}
+  local study = Study("acoustic", {
+    analysis = config.analysis or "frequency_domain",
+    frequency = config.frequency or 1e6,
+    drive_current = config.drive_current or 0.1,
+    drive_voltage = config.drive_voltage,
+    transducer = config.transducer,
+    medium = config.medium,
+    boundaries = config.boundaries or {},
+    include_reflections = config.include_reflections ~= false,
+    max_reflections = config.max_reflections or 10,
+  })
+  return study
+end
+
+--- Acoustic source definition (piezo transducer)
+-- @param geometry Transducer geometry reference
+-- @param config {frequency, current, voltage, phase}
+-- @return Acoustic source object
+function Physics.acoustic_source(geometry, config)
+  config = config or {}
+  return {
+    _type = "acoustic_source",
+    geometry = geometry,
+    frequency = config.frequency or 1e6,
+    drive_current = config.drive_current,
+    drive_voltage = config.drive_voltage,
+    phase = config.phase or 0,
+  }
+end
+
+--- Acoustic boundary condition
+-- @param surface Surface geometry
+-- @param config {type, impedance, reflection_coeff}
+-- @return Boundary condition object
+function Physics.acoustic_boundary(surface, config)
+  config = config or {}
+  return {
+    _type = "acoustic_boundary",
+    surface = surface,
+    boundary_type = config.type or "impedance",
+    impedance = config.impedance,
+    reflection_coeff = config.reflection_coeff,
+    absorption_coeff = config.absorption_coeff,
+  }
+end
+
 --- Coupled multiphysics study
 -- @param studies Table of studies to couple
 -- @param config Coupling configuration
@@ -282,6 +333,9 @@ magnetostatic = Physics.magnetostatic
 thermal = Physics.thermal
 thermal_transient = Physics.thermal_transient
 structural = Physics.structural
+acoustic = Physics.acoustic
+acoustic_source = Physics.acoustic_source
+acoustic_boundary = Physics.acoustic_boundary
 multiphysics = Physics.multiphysics
 port = Physics.port
 current_source = Physics.current_source

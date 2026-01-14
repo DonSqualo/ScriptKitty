@@ -13,10 +13,12 @@ ScriptCAD.instruments = require("stdlib.instruments")
 ScriptCAD.physics = require("stdlib.physics")
 ScriptCAD.view = require("stdlib.view")
 ScriptCAD.export = require("stdlib.export")
+ScriptCAD.circuits = require("stdlib.circuits")
 
 -- Export primitive functions to global scope
 box = ScriptCAD.primitives.box
 cylinder = ScriptCAD.primitives.cylinder
+colormap_plane = ScriptCAD.primitives.colormap_plane
 
 -- Export transform functions
 translate = ScriptCAD.transforms.translate
@@ -53,6 +55,9 @@ magnetostatic = ScriptCAD.physics.magnetostatic
 thermal = ScriptCAD.physics.thermal
 thermal_transient = ScriptCAD.physics.thermal_transient
 structural = ScriptCAD.physics.structural
+acoustic = ScriptCAD.physics.acoustic
+acoustic_source = ScriptCAD.physics.acoustic_source
+acoustic_boundary = ScriptCAD.physics.acoustic_boundary
 multiphysics = ScriptCAD.physics.multiphysics
 port = ScriptCAD.physics.port
 current_source = ScriptCAD.physics.current_source
@@ -70,6 +75,10 @@ ForceSensor = ScriptCAD.instruments.ForceSensor
 MagneticFieldPlane = ScriptCAD.instruments.MagneticFieldPlane
 ElectricFieldPlane = ScriptCAD.instruments.ElectricFieldPlane
 TemperaturePlane = ScriptCAD.instruments.TemperaturePlane
+AcousticPressurePlane = ScriptCAD.instruments.AcousticPressurePlane
+AcousticEnergyPlane = ScriptCAD.instruments.AcousticEnergyPlane
+AcousticIntensityPlane = ScriptCAD.instruments.AcousticIntensityPlane
+Hydrophone = ScriptCAD.instruments.Hydrophone
 Streamlines = ScriptCAD.instruments.Streamlines
 Isosurface = ScriptCAD.instruments.Isosurface
 SParams = ScriptCAD.instruments.SParams
@@ -80,12 +89,20 @@ export_step = ScriptCAD.export.export_step
 export_gltf = ScriptCAD.export.export_gltf
 export_obj = ScriptCAD.export.export_obj
 
+-- Export circuit functions
+SignalGenerator = ScriptCAD.circuits.SignalGenerator
+Amplifier = ScriptCAD.circuits.Amplifier
+MatchingNetwork = ScriptCAD.circuits.MatchingNetwork
+TransducerLoad = ScriptCAD.circuits.TransducerLoad
+Circuit = ScriptCAD.circuits.Circuit
+
 -- Scene registry
 ScriptCAD._scene = {
   objects = {},
   instruments = {},
   studies = {},
   exports = {},
+  circuit = nil,
 }
 
 --- Register an object in the scene
@@ -95,6 +112,10 @@ function ScriptCAD.register(obj)
     table.insert(ScriptCAD._scene.instruments, obj)
   elseif obj._type == "study" then
     table.insert(ScriptCAD._scene.studies, obj)
+  elseif obj._type == "circuit" then
+    ScriptCAD._scene.circuit = obj
+  elseif obj._type == "visualization" then
+    table.insert(ScriptCAD._scene.instruments, obj)
   else
     table.insert(ScriptCAD._scene.objects, obj)
   end
@@ -133,13 +154,20 @@ function ScriptCAD.serialize()
     end
   end
 
-  return {
+  local result = {
     objects = objects_serialized,
     instruments = scene.instruments,
     studies = studies_serialized,
     exports = scene.exports,
     view = scene.view,
   }
+
+  -- Include circuit if present
+  if ScriptCAD._scene.circuit then
+    result.circuit = ScriptCAD._scene.circuit:serialize()
+  end
+
+  return result
 end
 
 --- Clear the scene
@@ -149,6 +177,7 @@ function ScriptCAD.clear()
     instruments = {},
     studies = {},
     exports = {},
+    circuit = nil,
   }
   ScriptCAD.instruments.clear()
   ScriptCAD.physics.clear()

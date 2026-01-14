@@ -191,6 +191,90 @@ function Instruments.TemperaturePlane(plane, offset, config)
   return field_plane
 end
 
+--- Acoustic pressure field visualization
+-- @param plane "XY", "XZ", or "YZ"
+-- @param offset Distance from origin along normal
+-- @param config {quantity, clip_to_domain, bounds, resolution, color_map}
+-- @return AcousticPressurePlane instrument
+function Instruments.AcousticPressurePlane(plane, offset, config)
+  config = config or {}
+  local field_plane = Instrument("acoustic_field_plane", {0, 0, 0}, {
+    plane = plane or "XZ",
+    offset = offset or 0,
+    quantity = config.quantity or "pressure",
+    clip_to_domain = config.clip_to_domain,
+    bounds = config.bounds,
+    style = "colormap",
+    scale = config.scale or "linear",
+    resolution = config.resolution or 50,
+    color_map = config.color_map or "jet",
+    range_min = config.range_min,
+    range_max = config.range_max,
+    show_nodal_lines = config.show_nodal_lines or false,
+    render_in_scene = config.render_in_scene ~= false,
+  })
+  return field_plane
+end
+
+--- Acoustic energy density field visualization
+-- @param plane "XY", "XZ", or "YZ"
+-- @param offset Distance from origin along normal
+-- @param config {clip_to_domain, resolution, color_map}
+-- @return AcousticEnergyPlane instrument
+function Instruments.AcousticEnergyPlane(plane, offset, config)
+  config = config or {}
+  local field_plane = Instrument("acoustic_field_plane", {0, 0, 0}, {
+    plane = plane or "XZ",
+    offset = offset or 0,
+    quantity = "energy_density",
+    clip_to_domain = config.clip_to_domain,
+    style = "colormap",
+    scale = config.scale or "linear",
+    resolution = config.resolution or 50,
+    color_map = config.color_map or "hot",
+    range_min = config.range_min,
+    range_max = config.range_max,
+  })
+  return field_plane
+end
+
+--- Acoustic intensity field visualization
+-- @param plane "XY", "XZ", or "YZ"
+-- @param offset Distance from origin along normal
+-- @param config {clip_to_domain, resolution, color_map}
+-- @return AcousticIntensityPlane instrument
+function Instruments.AcousticIntensityPlane(plane, offset, config)
+  config = config or {}
+  local field_plane = Instrument("acoustic_field_plane", {0, 0, 0}, {
+    plane = plane or "XZ",
+    offset = offset or 0,
+    quantity = "intensity",
+    clip_to_domain = config.clip_to_domain,
+    style = "colormap",
+    scale = config.scale or "log",
+    resolution = config.resolution or 50,
+    color_map = config.color_map or "viridis",
+    range_min = config.range_min,
+    range_max = config.range_max,
+  })
+  return field_plane
+end
+
+--- Hydrophone probe for acoustic pressure measurement
+-- @param position {x, y, z} position
+-- @param config {bandwidth, sensitivity}
+-- @return Hydrophone instrument
+function Instruments.Hydrophone(position, config)
+  config = config or {}
+  local probe = Instrument("hydrophone", position, {
+    bandwidth = config.bandwidth or 10e6,
+    sensitivity = config.sensitivity or -220,
+    component = config.component or "magnitude",
+    output_unit = config.unit or "Pa",
+  })
+  return probe
+end
+
 --- Streamlines visualization for vector fields
 -- @param config {field, seeds, length, color}
 -- @return Streamlines instrument
@@ -268,6 +352,10 @@ ForceSensor = Instruments.ForceSensor
 MagneticFieldPlane = Instruments.MagneticFieldPlane
 ElectricFieldPlane = Instruments.ElectricFieldPlane
 TemperaturePlane = Instruments.TemperaturePlane
+AcousticPressurePlane = Instruments.AcousticPressurePlane
+AcousticEnergyPlane = Instruments.AcousticEnergyPlane
+AcousticIntensityPlane = Instruments.AcousticIntensityPlane
+Hydrophone = Instruments.Hydrophone
 Streamlines = Instruments.Streamlines
 Isosurface = Instruments.Isosurface
 SParams = Instruments.SParams

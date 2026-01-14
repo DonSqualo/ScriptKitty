@@ -137,4 +137,55 @@ function Primitives.cylinder(r, h)
   )
 end
 
+--- Create a colormap visualization plane
+-- @param config {plane, bounds, resolution, colormap_data, color_map}
+-- @return Visualization plane object
+function Primitives.colormap_plane(config)
+  config = config or {}
+  local plane = config.plane or "XZ"
+  local bounds = config.bounds or {x_min = -10, x_max = 10, z_min = 0, z_max = 10}
+  local resolution = config.resolution or 50
+  local offset = config.offset or 0
+
+  local viz = {
+    _type = "visualization",
+    _viz_type = "colormap_plane",
+    _plane = plane,
+    _bounds = bounds,
+    _offset = offset,
+    _resolution = resolution,
+    _colormap_data = config.colormap_data,
+    _color_map = config.color_map or "jet",
+    _opacity = config.opacity or 0.9,
+  }
+
+  setmetatable(viz, {__index = {
+    at = function(self, x, y, z)
+      self._position = {x, y, z}
+      return self
+    end,
+
+    opacity = function(self, a)
+      self._opacity = a
+      return self
+    end,
+
+    serialize = function(self)
+      return {
+        type = "colormap_plane",
+        plane = self._plane,
+        bounds = self._bounds,
+        offset = self._offset,
+        resolution = self._resolution,
+        colormap_data = self._colormap_data,
+        color_map = self._color_map,
+        opacity = self._opacity,
+        position = self._position,
+      }
+    end
+  }})
+
+  return viz
+end
+
 return Primitives
