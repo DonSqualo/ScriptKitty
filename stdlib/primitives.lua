@@ -9,26 +9,26 @@ local function Shape(sdf_func, bounds, metadata)
     _type = "shape",
     _sdf = sdf_func,
     _bounds = bounds or {min = {-1e6, -1e6, -1e6}, max = {1e6, 1e6, 1e6}},
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
     _metadata = metadata or {}
   }
 
   setmetatable(shape, {__index = {
     at = function(self, x, y, z)
-      self._transform.position = {x, y, z}
+      table.insert(self._ops, {op = "translate", x = x, y = y, z = z})
       return self
     end,
 
     rotate = function(self, rx, ry, rz)
-      self._transform.rotation = {rx, ry, rz}
+      table.insert(self._ops, {op = "rotate", x = rx, y = ry, z = rz})
       return self
     end,
 
     scale = function(self, sx, sy, sz)
       sy = sy or sx
       sz = sz or sx
-      self._transform.scale = {sx, sy, sz}
+      table.insert(self._ops, {op = "scale", x = sx, y = sy, z = sz})
       return self
     end,
 
@@ -47,6 +47,19 @@ local function Shape(sdf_func, bounds, metadata)
       return self
     end,
 
+    center = function(self, cx, cy, cz)
+      local bounds = self._bounds
+      local dx = cx and -((bounds.min[1] + bounds.max[1]) / 2) or 0
+      local dy = cy and -((bounds.min[2] + bounds.max[2]) / 2) or 0
+      local dz = cz and -((bounds.min[3] + bounds.max[3]) / 2) or 0
+      table.insert(self._ops, {op = "translate", x = dx, y = dy, z = dz})
+      return self
+    end,
+
+    centerXY = function(self)
+      return self:center(true, true, false)
+    end,
+
     eval = function(self, x, y, z)
       return self._sdf(x, y, z)
     end,
@@ -55,7 +68,7 @@ local function Shape(sdf_func, bounds, metadata)
       return {
         type = self._metadata.primitive,
         params = self._metadata.params,
-        transform = self._transform,
+        ops = self._ops,
         material = self._material,
         color = self._color,
         name = self._name
@@ -66,12 +79,12 @@ local function Shape(sdf_func, bounds, metadata)
   return shape
 end
 
--- SDF for box
-local function box_sdf(hw, hd, hh)
+-- SDF for box (corner at origin, extends to +w, +d, +h)
+local function box_sdf(w, d, h)
   return function(x, y, z)
-    local qx = math.abs(x) - hw
-    local qy = math.abs(y) - hd
-    local qz = math.abs(z) - hh
+    local qx = math.max(-x, x - w)
+    local qy = math.max(-y, y - d)
+    local qz = math.max(-z, z - h)
     local outside = math.sqrt(
       math.max(qx, 0)^2 +
       math.max(qy, 0)^2 +
@@ -98,7 +111,7 @@ local function cylinder_sdf(r, h)
   end
 end
 
---- Create a box/cuboid
+--- Create a box/cuboid (corner at origin)
 -- @param w Width (X dimension)
 -- @param d Depth (Y dimension), defaults to w
 -- @param h Height (Z dimension), defaults to w
@@ -106,10 +119,9 @@ end
 function Primitives.box(w, d, h)
   d = d or w
   h = h or w
-  local hw, hd, hh = w/2, d/2, h/2
 
-  return Shape(box_sdf(hw, hd, hh),
-    {min = {-hw, -hd, -hh}, max = {hw, hd, hh}},
+  return Shape(box_sdf(w, d, h),
+    {min = {0, 0, 0}, max = {w, d, h}},
     {primitive = "box", params = {w = w, d = d, h = h}}
   )
 end

@@ -25,7 +25,7 @@ Coverslip = {
 Oring = {
   outer_diameter = 28,
   inner_diameter = 24,
-  thickness = 1.5,
+  thickness = 0.2,
 }
 
 MetalBase = {
@@ -42,44 +42,51 @@ PolyTube = {
   height = 10,
 }
 
+Microscope = {
+  height = 6,
+  WellPlate = {
+    length = 127.76,
+    width = 85.48,
+  }
+}
+Microscope.length = Microscope.WellPlate.length + 20
+Microscope.width = Microscope.WellPlate.width + 20
+Microscope.WellPlate.offset = Microscope.height - 2
+
 HolderAdapter = {
-  length = 127.76,
-  width = 85.48,
-  height = 8,
-  dish_cutout = 36,
+  tolerance = 0.5,
+  height = Microscope.WellPlate.offset
+}
+HolderAdapter.length = Microscope.WellPlate.length - 2 * HolderAdapter.tolerance
+HolderAdapter.width = Microscope.WellPlate.width - 2 * HolderAdapter.tolerance
+
+Medium = {
+  liquid_height = PolyTube.height - 2
+}
+
+Transducer = {
+  diameter = 12,
+  thickness = 2,
+  height_from_coverslip = 5,
 }
 
 Lid = {
   diameter = 34,
-  height = 15,
+  height = 5,
   wall_thickness = 1.5,
 }
-
-Transducer = {
-  diameter = 20,
-  thickness = 2,
-  holder_depth = 5,
-}
-Coverslip.model = cylinder(Coverslip.diameter / 2, Coverslip.thickness)
-
-local oring_z = Coverslip.thickness
-Oring.model = difference(
-      cylinder(Oring.outer_diameter / 2, Oring.thickness),
-      cylinder(Oring.inner_diameter / 2, Oring.thickness)
-    )
-    :at(0, 0, oring_z)
-
 -- ============================================================================
 -- Geometry: Metal Threaded Base (Stainless Steel)
+-- Coverslip top face at z=0 (cell culture surface)
 -- ============================================================================
 
-local base_z = oring_z + Oring.thickness
+local base_z = -Coverslip.thickness - MetalBase.lip_height
 
 MetalBase.body = difference(
       cylinder(MetalBase.outer_diameter / 2, MetalBase.height),
       cylinder(MetalBase.inner_diameter / 2, MetalBase.height + 1)
     )
-    :at(0, 0, base_z)
+    :at(0, 0, -Coverslip.thickness)
 
 MetalBase.lip = difference(
       cylinder(MetalBase.inner_diameter / 2, MetalBase.lip_height),
@@ -88,12 +95,32 @@ MetalBase.lip = difference(
     :at(0, 0, base_z)
 
 MetalBase.model = group("metal_base", { MetalBase.body, MetalBase.lip })
+    :material(material("steel"))
 
 -- ============================================================================
--- Geometry: Polycarbonate Tube
+-- Geometry: Coverslip (top face at z=0)
 -- ============================================================================
 
-local tube_z = base_z + MetalBase.height
+local coverslip_z = -Coverslip.thickness
+Coverslip.model = cylinder(Coverslip.diameter / 2, Coverslip.thickness)
+    :at(0, 0, coverslip_z)
+
+-- ============================================================================
+-- Geometry: O-ring (immediately at z=0, on top of coverslip)
+-- ============================================================================
+
+local oring_z = 0
+Oring.model = difference(
+      cylinder(Oring.outer_diameter / 2, Oring.thickness),
+      cylinder(Oring.inner_diameter / 2, Oring.thickness)
+    )
+    :at(0, 0, oring_z)
+
+-- ============================================================================
+-- Geometry: Polycarbonate Tube (above o-ring)
+-- ============================================================================
+
+local tube_z = oring_z + Oring.thickness
 
 PolyTube.model = difference(
       cylinder(PolyTube.outer_diameter / 2, PolyTube.height),
@@ -102,7 +129,7 @@ PolyTube.model = difference(
     :at(0, 0, tube_z)
 
 -- ============================================================================
--- Assembly: Interchangeable Coverslip Dish
+-- Assembly: Interchangeable Coverslip Dish (without medium, added later)
 -- ============================================================================
 
 local icd_assembly = group("icd_assembly", {
@@ -116,57 +143,73 @@ local icd_assembly = group("icd_assembly", {
 -- Geometry: 96-Well Plate Holder Adapter
 -- ============================================================================
 
-local holder_z = -HolderAdapter.height
+Microscope.model = difference(
+      box(Microscope.length, Microscope.width, Microscope.height):centerXY(),
+      box(Microscope.WellPlate.length, Microscope.WellPlate.width, Microscope.height):centerXY():at(0, 0,
+        Microscope.height - Microscope.WellPlate.offset),
+      box(Microscope.WellPlate.length - Microscope.WellPlate.offset,
+        Microscope.WellPlate.width - Microscope.WellPlate.offset,
+        Microscope.height):centerXY()
+    )
+    :at(0, 0, -Microscope.height)
+    :material(material("steel"))
 
-HolderAdapter.body = box(HolderAdapter.length, HolderAdapter.width, HolderAdapter.height)
-    :at(0, 0, HolderAdapter.height / 2)
 
-HolderAdapter.dish_cutout = cylinder(HolderAdapter.dish_cutout / 2, HolderAdapter.height + 2)
-
-HolderAdapter.edge_cutout = box(HolderAdapter.length / 3, HolderAdapter.width * 0.6, HolderAdapter.height + 2)
-    :at(HolderAdapter.length / 3, 0, HolderAdapter.height / 2)
 
 HolderAdapter.model = difference(
-      HolderAdapter.body,
-      HolderAdapter.dish_cutout,
-      HolderAdapter.edge_cutout
+      box(HolderAdapter.length, HolderAdapter.width, HolderAdapter.height):centerXY(),
+      cylinder(MetalBase.inner_diameter / 2, HolderAdapter.height)
     )
-    :at(0, 0, holder_z)
+    :at(0, 0, -HolderAdapter.height)
 
 -- ============================================================================
--- Geometry: Custom Lid with Ultrasound Transducer Holder
+-- Geometry: Lid + Damper + Transducer Assembly
+-- Transducer face at specific height from coverslip, damper connects to lid
 -- ============================================================================
 
-local lid_z = tube_z + PolyTube.height
+local lid_z = tube_z + PolyTube.height - (Lid.height - Lid.wall_thickness)
+local lid_inner_ceiling_z = lid_z + (Lid.height - Lid.wall_thickness)
+local transducer_z = Transducer.height_from_coverslip
+local damper_z = transducer_z + Transducer.thickness
+
+Damper = {
+  diameter = Transducer.diameter,
+  height = lid_inner_ceiling_z - damper_z,
+}
 
 Lid.outer = cylinder(Lid.diameter / 2, Lid.height)
 
 Lid.inner = cylinder(
-      Lid.diameter / 2 - Lid.wall_thickness,
-      Lid.height - Lid.wall_thickness
-    )
+  Lid.diameter / 2 - Lid.wall_thickness,
+  Lid.height - Lid.wall_thickness
+)
 
-Lid.transducer_pocket = cylinder(
-      Transducer.diameter / 2 + 0.5,
-      Transducer.holder_depth
-    )
-    :at(0, 0, Lid.height - Transducer.holder_depth)
-
-Lid.model = difference(
-      Lid.outer,
-      Lid.inner,
-      Lid.transducer_pocket
-    )
+Lid.body = difference(Lid.outer, Lid.inner)
     :at(0, 0, lid_z)
 
--- ============================================================================
--- Geometry: Ultrasound Transducer Disk
--- ============================================================================
-
-local transducer_z = lid_z + Lid.height - Transducer.holder_depth
+Damper.model = cylinder(Damper.diameter / 2, Damper.height)
+    :at(0, 0, damper_z)
+    :material(material("steel"))
 
 Transducer.model = cylinder(Transducer.diameter / 2, Transducer.thickness)
     :at(0, 0, transducer_z)
+
+Lid.model = group("lid_assembly", {
+  Lid.body,
+  Damper.model,
+  Transducer.model,
+})
+
+-- ============================================================================
+-- Geometry: Culture Medium (water inside tube, displaced by transducer/damper)
+-- ============================================================================
+
+local displacement_height = lid_inner_ceiling_z - transducer_z
+Medium.model = difference(
+      cylinder(PolyTube.inner_diameter / 2 - 0.1, Medium.liquid_height),
+      cylinder(Transducer.diameter / 2, displacement_height):at(0, 0, transducer_z)
+    )
+    :material(material("water"))
 
 -- ============================================================================
 -- Full Assembly
@@ -174,9 +217,10 @@ Transducer.model = cylinder(Transducer.diameter / 2, Transducer.thickness)
 
 local assembly = group("pure_acoustics", {
   icd_assembly,
-  HolderAdapter.model,
+  Medium.model,
+  Microscope.model,
+  -- HolderAdapter.model,
   Lid.model,
-  Transducer.model,
 })
 
 ScriptCAD.register(assembly)

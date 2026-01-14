@@ -197,6 +197,12 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
 }
 
 fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<geometry::MeshData> {
+    // Clear scene state before each execution to prevent accumulation
+    let _ = lua.load(r#"
+        local loaded = package.loaded["stdlib"] or package.loaded["stdlib.init"]
+        if loaded and loaded.clear then loaded.clear() end
+    "#).exec();
+
     let result: mlua::Value = lua.load(content).eval()?;
     geometry::generate_mesh_from_lua(lua, &result)
 }

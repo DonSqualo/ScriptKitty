@@ -40,6 +40,31 @@ Materials.database = {
     permeability = 1.0,
     permittivity = 1.0006,
   },
+
+  steel = {
+    name = "Steel",
+    color = {0.15, 0.15, 0.17, 1.0},
+    conductivity = 1.45e6,
+    thermal_conductivity = 50,
+    density = 7850,
+    permeability = 100,
+    permittivity = 1.0,
+    youngs_modulus = 200e9,
+    poissons_ratio = 0.3,
+    yield_strength = 250e6,
+  },
+
+  water = {
+    name = "Water",
+    color = {0.2, 0.8, 0.8, 1.0},
+    conductivity = 0.0005,
+    thermal_conductivity = 0.6,
+    density = 1000,
+    permeability = 1.0,
+    permittivity = 80,
+    speed_of_sound = 1480,
+    viscosity = 0.001,
+  },
 }
 
 --- Create or retrieve a material

@@ -67,18 +67,29 @@ end
 local function make_csg_metatable()
   return {__index = {
     at = function(self, x, y, z)
-      self._transform.position = {x, y, z}
+      table.insert(self._ops, {op = "translate", x = x, y = y, z = z})
       return self
     end,
     rotate = function(self, rx, ry, rz)
-      self._transform.rotation = {rx, ry, rz}
+      table.insert(self._ops, {op = "rotate", x = rx, y = ry, z = rz})
       return self
     end,
     scale = function(self, sx, sy, sz)
       sy = sy or sx
       sz = sz or sx
-      self._transform.scale = {sx, sy, sz}
+      table.insert(self._ops, {op = "scale", x = sx, y = sy, z = sz})
       return self
+    end,
+    center = function(self, cx, cy, cz)
+      local bounds = self._bounds
+      local dx = cx and -((bounds.min[1] + bounds.max[1]) / 2) or 0
+      local dy = cy and -((bounds.min[2] + bounds.max[2]) / 2) or 0
+      local dz = cz and -((bounds.min[3] + bounds.max[3]) / 2) or 0
+      table.insert(self._ops, {op = "translate", x = dx, y = dy, z = dz})
+      return self
+    end,
+    centerXY = function(self)
+      return self:center(true, true, false)
     end,
     material = function(self, mat)
       self._material = mat
@@ -102,7 +113,7 @@ local function make_csg_metatable()
         blend = self._blend,
         thickness = self._thickness,
         children = children_serialized,
-        transform = self._transform,
+        ops = self._ops,
         material = self._material,
         name = self._name
       }
@@ -146,7 +157,7 @@ function CSG.union(...)
     _children = shapes,
     _sdf = make_union_sdf(shapes),
     _bounds = {min = min_bounds, max = max_bounds},
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
   }
 
@@ -172,7 +183,7 @@ function CSG.difference(base, ...)
     _children = {base, table.unpack(cutters)},
     _sdf = make_difference_sdf(base, cutters),
     _bounds = base._bounds,
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
   }
 
@@ -215,7 +226,7 @@ function CSG.intersect(...)
     _children = shapes,
     _sdf = make_intersect_sdf(shapes),
     _bounds = {min = min_bounds, max = max_bounds},
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
   }
 
@@ -247,7 +258,7 @@ function CSG.smooth_union(k, ...)
     _children = shapes,
     _sdf = make_smooth_union_sdf(shapes, k),
     _bounds = {min = min_bounds, max = max_bounds},
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
   }
 
@@ -270,7 +281,7 @@ function CSG.shell(shape, thickness)
       min = {shape._bounds.min[1] - thickness, shape._bounds.min[2] - thickness, shape._bounds.min[3] - thickness},
       max = {shape._bounds.max[1] + thickness, shape._bounds.max[2] + thickness, shape._bounds.max[3] + thickness}
     },
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _material = nil,
   }
 

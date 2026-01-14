@@ -13,6 +13,7 @@ use std::f32::consts::PI;
 pub struct MeshData {
     pub positions: Vec<f32>,
     pub normals: Vec<f32>,
+    pub colors: Vec<f32>,
     pub indices: Vec<u32>,
 }
 
@@ -21,6 +22,7 @@ impl MeshData {
         MeshData {
             positions: Vec::new(),
             normals: Vec::new(),
+            colors: Vec::new(),
             indices: Vec::new(),
         }
     }
@@ -29,6 +31,7 @@ impl MeshData {
         let idx = (self.positions.len() / 3) as u32;
         self.positions.extend_from_slice(&pos);
         self.normals.extend_from_slice(&normal);
+        self.colors.extend_from_slice(&[1.0, 1.0, 1.0]); // default white
         idx
     }
 
@@ -36,10 +39,19 @@ impl MeshData {
         self.indices.extend_from_slice(&[a, b, c]);
     }
 
+    fn set_color(&mut self, r: f32, g: f32, b: f32) {
+        for i in 0..self.colors.len() / 3 {
+            self.colors[i * 3] = r;
+            self.colors[i * 3 + 1] = g;
+            self.colors[i * 3 + 2] = b;
+        }
+    }
+
     fn merge(&mut self, other: &MeshData) {
         let offset = (self.positions.len() / 3) as u32;
         self.positions.extend_from_slice(&other.positions);
         self.normals.extend_from_slice(&other.normals);
+        self.colors.extend_from_slice(&other.colors);
         for &idx in &other.indices {
             self.indices.push(idx + offset);
         }
@@ -58,6 +70,9 @@ impl MeshData {
         }
         for &n in &self.normals {
             data.extend_from_slice(&n.to_le_bytes());
+        }
+        for &c in &self.colors {
+            data.extend_from_slice(&c.to_le_bytes());
         }
         for &i in &self.indices {
             data.extend_from_slice(&i.to_le_bytes());
@@ -218,17 +233,15 @@ fn procedural_tube(outer_r: f32, inner_r: f32, height: f32) -> MeshData {
 
 fn procedural_box(w: f32, d: f32, h: f32) -> MeshData {
     let mut mesh = MeshData::new();
-    let hw = w / 2.0;
-    let hd = d / 2.0;
-    let hh = h / 2.0;
 
+    // Box with corner at origin, extends to (w, d, h)
     let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
-        ([1.0, 0.0, 0.0], [[hw, -hd, -hh], [hw, hd, -hh], [hw, hd, hh], [hw, -hd, hh]]),
-        ([-1.0, 0.0, 0.0], [[-hw, hd, -hh], [-hw, -hd, -hh], [-hw, -hd, hh], [-hw, hd, hh]]),
-        ([0.0, 1.0, 0.0], [[hw, hd, -hh], [-hw, hd, -hh], [-hw, hd, hh], [hw, hd, hh]]),
-        ([0.0, -1.0, 0.0], [[-hw, -hd, -hh], [hw, -hd, -hh], [hw, -hd, hh], [-hw, -hd, hh]]),
-        ([0.0, 0.0, 1.0], [[-hw, -hd, hh], [hw, -hd, hh], [hw, hd, hh], [-hw, hd, hh]]),
-        ([0.0, 0.0, -1.0], [[hw, -hd, -hh], [-hw, -hd, -hh], [-hw, hd, -hh], [hw, hd, -hh]]),
+        ([1.0, 0.0, 0.0], [[w, 0.0, 0.0], [w, d, 0.0], [w, d, h], [w, 0.0, h]]),
+        ([-1.0, 0.0, 0.0], [[0.0, d, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, h], [0.0, d, h]]),
+        ([0.0, 1.0, 0.0], [[w, d, 0.0], [0.0, d, 0.0], [0.0, d, h], [w, d, h]]),
+        ([0.0, -1.0, 0.0], [[0.0, 0.0, 0.0], [w, 0.0, 0.0], [w, 0.0, h], [0.0, 0.0, h]]),
+        ([0.0, 0.0, 1.0], [[0.0, 0.0, h], [w, 0.0, h], [w, d, h], [0.0, d, h]]),
+        ([0.0, 0.0, -1.0], [[w, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, d, 0.0], [w, d, 0.0]]),
     ];
 
     for (normal, verts) in faces {
@@ -284,66 +297,80 @@ fn procedural_sphere(radius: f32) -> MeshData {
 }
 
 // ============================================================================
-// Transform application
+// Transform application - operations applied in order
 // ============================================================================
 
-fn apply_transform_to_mesh(mesh: &mut MeshData, position: [f32; 3], rotation: [f32; 3], scale: [f32; 3]) {
-    // Apply scale
-    if scale != [1.0, 1.0, 1.0] {
-        for i in 0..mesh.positions.len() / 3 {
-            mesh.positions[i * 3] *= scale[0];
-            mesh.positions[i * 3 + 1] *= scale[1];
-            mesh.positions[i * 3 + 2] *= scale[2];
-        }
+fn apply_translate(mesh: &mut MeshData, x: f32, y: f32, z: f32) {
+    for i in 0..mesh.positions.len() / 3 {
+        mesh.positions[i * 3] += x;
+        mesh.positions[i * 3 + 1] += y;
+        mesh.positions[i * 3 + 2] += z;
     }
+}
 
-    // Apply rotation (Euler XYZ in degrees)
-    if rotation != [0.0, 0.0, 0.0] {
-        let rx = rotation[0].to_radians();
-        let ry = rotation[1].to_radians();
-        let rz = rotation[2].to_radians();
+fn apply_rotate(mesh: &mut MeshData, rx: f32, ry: f32, rz: f32) {
+    let rx = rx.to_radians();
+    let ry = ry.to_radians();
+    let rz = rz.to_radians();
 
-        let (sx, cx) = (rx.sin(), rx.cos());
-        let (sy, cy) = (ry.sin(), ry.cos());
-        let (sz, cz) = (rz.sin(), rz.cos());
+    let (sx, cx) = (rx.sin(), rx.cos());
+    let (sy, cy) = (ry.sin(), ry.cos());
+    let (sz, cz) = (rz.sin(), rz.cos());
 
-        // Combined rotation matrix (ZYX order)
-        let m00 = cy * cz;
-        let m01 = sx * sy * cz - cx * sz;
-        let m02 = cx * sy * cz + sx * sz;
-        let m10 = cy * sz;
-        let m11 = sx * sy * sz + cx * cz;
-        let m12 = cx * sy * sz - sx * cz;
-        let m20 = -sy;
-        let m21 = sx * cy;
-        let m22 = cx * cy;
+    // Combined rotation matrix (ZYX order)
+    let m00 = cy * cz;
+    let m01 = sx * sy * cz - cx * sz;
+    let m02 = cx * sy * cz + sx * sz;
+    let m10 = cy * sz;
+    let m11 = sx * sy * sz + cx * cz;
+    let m12 = cx * sy * sz - sx * cz;
+    let m20 = -sy;
+    let m21 = sx * cy;
+    let m22 = cx * cy;
 
-        for i in 0..mesh.positions.len() / 3 {
-            let x = mesh.positions[i * 3];
-            let y = mesh.positions[i * 3 + 1];
-            let z = mesh.positions[i * 3 + 2];
+    for i in 0..mesh.positions.len() / 3 {
+        let x = mesh.positions[i * 3];
+        let y = mesh.positions[i * 3 + 1];
+        let z = mesh.positions[i * 3 + 2];
 
-            mesh.positions[i * 3] = m00 * x + m01 * y + m02 * z;
-            mesh.positions[i * 3 + 1] = m10 * x + m11 * y + m12 * z;
-            mesh.positions[i * 3 + 2] = m20 * x + m21 * y + m22 * z;
+        mesh.positions[i * 3] = m00 * x + m01 * y + m02 * z;
+        mesh.positions[i * 3 + 1] = m10 * x + m11 * y + m12 * z;
+        mesh.positions[i * 3 + 2] = m20 * x + m21 * y + m22 * z;
 
-            // Rotate normals too
-            let nx = mesh.normals[i * 3];
-            let ny = mesh.normals[i * 3 + 1];
-            let nz = mesh.normals[i * 3 + 2];
+        let nx = mesh.normals[i * 3];
+        let ny = mesh.normals[i * 3 + 1];
+        let nz = mesh.normals[i * 3 + 2];
 
-            mesh.normals[i * 3] = m00 * nx + m01 * ny + m02 * nz;
-            mesh.normals[i * 3 + 1] = m10 * nx + m11 * ny + m12 * nz;
-            mesh.normals[i * 3 + 2] = m20 * nx + m21 * ny + m22 * nz;
-        }
+        mesh.normals[i * 3] = m00 * nx + m01 * ny + m02 * nz;
+        mesh.normals[i * 3 + 1] = m10 * nx + m11 * ny + m12 * nz;
+        mesh.normals[i * 3 + 2] = m20 * nx + m21 * ny + m22 * nz;
     }
+}
 
-    // Apply translation
-    if position != [0.0, 0.0, 0.0] {
-        for i in 0..mesh.positions.len() / 3 {
-            mesh.positions[i * 3] += position[0];
-            mesh.positions[i * 3 + 1] += position[1];
-            mesh.positions[i * 3 + 2] += position[2];
+fn apply_scale(mesh: &mut MeshData, sx: f32, sy: f32, sz: f32) {
+    for i in 0..mesh.positions.len() / 3 {
+        mesh.positions[i * 3] *= sx;
+        mesh.positions[i * 3 + 1] *= sy;
+        mesh.positions[i * 3 + 2] *= sz;
+    }
+}
+
+fn apply_ops(mesh: &mut MeshData, table: &mlua::Table) {
+    if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
+        for pair in ops.pairs::<i64, mlua::Table>() {
+            if let Ok((_, op_table)) = pair {
+                let op: String = op_table.get("op").unwrap_or_default();
+                let x: f32 = op_table.get("x").unwrap_or(0.0);
+                let y: f32 = op_table.get("y").unwrap_or(0.0);
+                let z: f32 = op_table.get("z").unwrap_or(0.0);
+
+                match op.as_str() {
+                    "translate" => apply_translate(mesh, x, y, z),
+                    "rotate" => apply_rotate(mesh, x, y, z),
+                    "scale" => apply_scale(mesh, x, y, z),
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -352,30 +379,15 @@ fn apply_transform_to_mesh(mesh: &mut MeshData, position: [f32; 3], rotation: [f
 // Lua scene parsing
 // ============================================================================
 
-fn get_transform(table: &mlua::Table) -> ([f32; 3], [f32; 3], [f32; 3]) {
-    let mut position = [0.0f32, 0.0, 0.0];
-    let mut rotation = [0.0f32, 0.0, 0.0];
-    let mut scale = [1.0f32, 1.0, 1.0];
-
-    if let Ok(transform) = table.get::<_, mlua::Table>("transform") {
-        if let Ok(pos) = transform.get::<_, mlua::Table>("position") {
-            position[0] = pos.get::<_, f32>(1).unwrap_or(0.0);
-            position[1] = pos.get::<_, f32>(2).unwrap_or(0.0);
-            position[2] = pos.get::<_, f32>(3).unwrap_or(0.0);
-        }
-        if let Ok(rot) = transform.get::<_, mlua::Table>("rotation") {
-            rotation[0] = rot.get::<_, f32>(1).unwrap_or(0.0);
-            rotation[1] = rot.get::<_, f32>(2).unwrap_or(0.0);
-            rotation[2] = rot.get::<_, f32>(3).unwrap_or(0.0);
-        }
-        if let Ok(sc) = transform.get::<_, mlua::Table>("scale") {
-            scale[0] = sc.get::<_, f32>(1).unwrap_or(1.0);
-            scale[1] = sc.get::<_, f32>(2).unwrap_or(1.0);
-            scale[2] = sc.get::<_, f32>(3).unwrap_or(1.0);
+fn apply_material_color(mesh: &mut MeshData, table: &mlua::Table) {
+    if let Ok(material) = table.get::<_, mlua::Table>("material") {
+        if let Ok(color) = material.get::<_, mlua::Table>("color") {
+            let r: f32 = color.get(1).unwrap_or(1.0);
+            let g: f32 = color.get(2).unwrap_or(1.0);
+            let b: f32 = color.get(3).unwrap_or(1.0);
+            mesh.set_color(r, g, b);
         }
     }
-
-    (position, rotation, scale)
 }
 
 /// Check if this is a cylinder-cylinder difference (tube) and handle it specially
@@ -411,13 +423,19 @@ fn try_build_tube(table: &mlua::Table) -> Option<MeshData> {
     let outer_r: f32 = params1.get("r").ok()?;
     let outer_h: f32 = params1.get("h").ok()?;
     let inner_r: f32 = params2.get("r").ok()?;
+    let inner_h: f32 = params2.get("h").ok()?;
 
-    // Use outer height for the tube
+    // Only use tube optimization if inner cylinder goes all the way through
+    // (i.e., it's actually a tube, not a cup/lid shape)
+    if inner_h < outer_h {
+        return None;
+    }
+
     let mut mesh = procedural_tube(outer_r, inner_r, outer_h);
 
-    // Apply transform from the CSG node
-    let (position, rotation, scale) = get_transform(table);
-    apply_transform_to_mesh(&mut mesh, position, rotation, scale);
+    // Apply ops and material from the CSG node
+    apply_ops(&mut mesh, table);
+    apply_material_color(&mut mesh, table);
 
     Some(mesh)
 }
@@ -452,8 +470,8 @@ fn build_object(table: &mlua::Table) -> Result<MeshData> {
         }
 
         let mut mesh = csg_mesh_to_data(&result);
-        let (position, rotation, scale) = get_transform(table);
-        apply_transform_to_mesh(&mut mesh, position, rotation, scale);
+        apply_ops(&mut mesh, table);
+        apply_material_color(&mut mesh, table);
         Ok(mesh)
     } else if obj_type == "group" {
         // Group - merge all children
@@ -466,15 +484,15 @@ fn build_object(table: &mlua::Table) -> Result<MeshData> {
             combined.merge(&child_mesh);
         }
 
-        let (position, rotation, scale) = get_transform(table);
-        apply_transform_to_mesh(&mut combined, position, rotation, scale);
+        apply_ops(&mut combined, table);
+        apply_material_color(&mut combined, table);
         Ok(combined)
     } else {
         // Primitive - use procedural generation
         let params: mlua::Table = table.get("params")?;
         let mut mesh = build_primitive(&obj_type, &params)?;
-        let (position, rotation, scale) = get_transform(table);
-        apply_transform_to_mesh(&mut mesh, position, rotation, scale);
+        apply_ops(&mut mesh, table);
+        apply_material_color(&mut mesh, table);
         Ok(mesh)
     }
 }
@@ -511,27 +529,54 @@ fn build_primitive(obj_type: &str, params: &mlua::Table) -> Result<MeshData> {
 fn build_csg_mesh(table: &mlua::Table) -> Result<CsgMesh<()>> {
     let obj_type: String = table.get("type")?;
 
-    match obj_type.as_str() {
+    let mut mesh = match obj_type.as_str() {
         "cylinder" => {
             let params: mlua::Table = table.get("params")?;
             let r: f64 = params.get("r")?;
             let h: f64 = params.get("h")?;
-            Ok(CsgMesh::cylinder(r, h, SEGMENTS, None))
+            CsgMesh::cylinder(r, h, SEGMENTS, None)
         }
         "box" => {
             let params: mlua::Table = table.get("params")?;
             let w: f64 = params.get("w")?;
             let d: f64 = params.get::<_, f64>("d").unwrap_or(w);
             let h: f64 = params.get("h")?;
-            Ok(CsgMesh::cuboid(w, d, h, None))
+            CsgMesh::cuboid(w, d, h, None)
         }
         "sphere" => {
             let params: mlua::Table = table.get("params")?;
             let r: f64 = params.get("r")?;
-            Ok(CsgMesh::sphere(r, SEGMENTS, SEGMENTS / 2, None))
+            CsgMesh::sphere(r, SEGMENTS, SEGMENTS / 2, None)
         }
-        _ => Err(anyhow!("Unsupported CSG primitive: {}", obj_type)),
+        _ => return Err(anyhow!("Unsupported CSG primitive: {}", obj_type)),
+    };
+
+    // Apply ops in order
+    if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
+        for pair in ops.pairs::<i64, mlua::Table>() {
+            if let Ok((_, op_table)) = pair {
+                let op: String = op_table.get("op").unwrap_or_default();
+                let x: f64 = op_table.get("x").unwrap_or(0.0);
+                let y: f64 = op_table.get("y").unwrap_or(0.0);
+                let z: f64 = op_table.get("z").unwrap_or(0.0);
+
+                match op.as_str() {
+                    "translate" => {
+                        mesh = mesh.translate(x, y, z);
+                    }
+                    "rotate" => {
+                        mesh = mesh.rotate(x, y, z);
+                    }
+                    "scale" => {
+                        mesh = mesh.scale(x, y, z);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
+
+    Ok(mesh)
 }
 
 fn csg_mesh_to_data(mesh: &CsgMesh<()>) -> MeshData {
@@ -566,6 +611,9 @@ fn csg_mesh_to_data(mesh: &CsgMesh<()>) -> MeshData {
                 data.normals.push(normal.x as f32);
                 data.normals.push(normal.y as f32);
                 data.normals.push(normal.z as f32);
+                data.colors.push(1.0);
+                data.colors.push(1.0);
+                data.colors.push(1.0);
                 vertex_map.insert(key, idx);
                 idx
             };

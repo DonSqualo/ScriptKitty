@@ -29,7 +29,7 @@ function Groups.group(name, children)
     _type = "group",
     _name = name,
     _children = children or {},
-    _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+    _ops = {},
     _visible = true,
     _locked = false,
   }
@@ -51,19 +51,37 @@ function Groups.group(name, children)
 
   setmetatable(grp, {__index = {
     at = function(self, x, y, z)
-      self._transform.position = {x, y, z}
+      table.insert(self._ops, {op = "translate", x = x, y = y, z = z})
       return self
     end,
 
     rotate = function(self, rx, ry, rz)
-      self._transform.rotation = {rx, ry, rz}
+      table.insert(self._ops, {op = "rotate", x = rx, y = ry, z = rz})
       return self
     end,
 
     scale = function(self, sx, sy, sz)
       sy = sy or sx
       sz = sz or sx
-      self._transform.scale = {sx, sy, sz}
+      table.insert(self._ops, {op = "scale", x = sx, y = sy, z = sz})
+      return self
+    end,
+
+    center = function(self, cx, cy, cz)
+      local bounds = self._bounds
+      local dx = cx and -((bounds.min[1] + bounds.max[1]) / 2) or 0
+      local dy = cy and -((bounds.min[2] + bounds.max[2]) / 2) or 0
+      local dz = cz and -((bounds.min[3] + bounds.max[3]) / 2) or 0
+      table.insert(self._ops, {op = "translate", x = dx, y = dy, z = dz})
+      return self
+    end,
+
+    centerXY = function(self)
+      return self:center(true, true, false)
+    end,
+
+    material = function(self, mat)
+      self._material = mat
       return self
     end,
 
@@ -139,7 +157,8 @@ function Groups.group(name, children)
         type = "group",
         name = self._name,
         children = children_serialized,
-        transform = self._transform,
+        ops = self._ops,
+        material = self._material,
         visible = self._visible,
         locked = self._locked
       }
@@ -176,28 +195,28 @@ function Groups.component(name, children)
     local inst = {
       _type = "instance",
       _component = self._name,
-      _transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+      _ops = {},
     }
     setmetatable(inst, {__index = {
       at = function(s, x, y, z)
-        s._transform.position = {x, y, z}
+        table.insert(s._ops, {op = "translate", x = x, y = y, z = z})
         return s
       end,
       rotate = function(s, rx, ry, rz)
-        s._transform.rotation = {rx, ry, rz}
+        table.insert(s._ops, {op = "rotate", x = rx, y = ry, z = rz})
         return s
       end,
       scale = function(s, sx, sy, sz)
         sy = sy or sx
         sz = sz or sx
-        s._transform.scale = {sx, sy, sz}
+        table.insert(s._ops, {op = "scale", x = sx, y = sy, z = sz})
         return s
       end,
       serialize = function(s)
         return {
           type = "instance",
           component = s._component,
-          transform = s._transform
+          ops = s._ops
         }
       end
     }})
