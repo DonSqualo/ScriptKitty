@@ -256,6 +256,103 @@ fn procedural_box(w: f32, d: f32, h: f32) -> MeshData {
     mesh
 }
 
+// Box with centered cylindrical hole (centered XY, base at z=0)
+fn procedural_box_with_hole(w: f32, d: f32, h: f32, hole_r: f32) -> MeshData {
+    let mut mesh = MeshData::new();
+    let cx = w / 2.0;
+    let cy = d / 2.0;
+
+    // 4 outer side walls
+    let faces: [([f32; 3], [[f32; 3]; 4]); 4] = [
+        ([1.0, 0.0, 0.0], [[w, 0.0, 0.0], [w, d, 0.0], [w, d, h], [w, 0.0, h]]),
+        ([-1.0, 0.0, 0.0], [[0.0, d, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, h], [0.0, d, h]]),
+        ([0.0, 1.0, 0.0], [[w, d, 0.0], [0.0, d, 0.0], [0.0, d, h], [w, d, h]]),
+        ([0.0, -1.0, 0.0], [[0.0, 0.0, 0.0], [w, 0.0, 0.0], [w, 0.0, h], [0.0, 0.0, h]]),
+    ];
+    for (normal, verts) in faces {
+        let v0 = mesh.add_vertex(verts[0], normal);
+        let v1 = mesh.add_vertex(verts[1], normal);
+        let v2 = mesh.add_vertex(verts[2], normal);
+        let v3 = mesh.add_vertex(verts[3], normal);
+        mesh.add_triangle(v0, v1, v2);
+        mesh.add_triangle(v0, v2, v3);
+    }
+
+    // Inner cylindrical surface (normals pointing inward)
+    let mut inner_bottom = Vec::new();
+    let mut inner_top = Vec::new();
+    for i in 0..SEGMENTS {
+        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
+        let x = cx + hole_r * angle.cos();
+        let y = cy + hole_r * angle.sin();
+        let nx = -angle.cos();
+        let ny = -angle.sin();
+        inner_bottom.push(mesh.add_vertex([x, y, 0.0], [nx, ny, 0.0]));
+        inner_top.push(mesh.add_vertex([x, y, h], [nx, ny, 0.0]));
+    }
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        mesh.add_triangle(inner_bottom[i], inner_top[next], inner_bottom[next]);
+        mesh.add_triangle(inner_bottom[i], inner_top[i], inner_top[next]);
+    }
+
+    // Top face with hole (z=h, triangulate from box corners to circle)
+    let corners_top = [
+        mesh.add_vertex([0.0, 0.0, h], [0.0, 0.0, 1.0]),
+        mesh.add_vertex([w, 0.0, h], [0.0, 0.0, 1.0]),
+        mesh.add_vertex([w, d, h], [0.0, 0.0, 1.0]),
+        mesh.add_vertex([0.0, d, h], [0.0, 0.0, 1.0]),
+    ];
+    let mut circle_top = Vec::new();
+    for i in 0..SEGMENTS {
+        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
+        circle_top.push(mesh.add_vertex(
+            [cx + hole_r * angle.cos(), cy + hole_r * angle.sin(), h],
+            [0.0, 0.0, 1.0],
+        ));
+    }
+    // Fan triangles from each corner to nearby circle segments
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        let angle = (i as f32 + 0.5) / SEGMENTS as f32 * 2.0 * PI;
+        let corner_idx = if angle < PI / 2.0 { 1 } else if angle < PI { 2 } else if angle < 3.0 * PI / 2.0 { 3 } else { 0 };
+        mesh.add_triangle(corners_top[corner_idx], circle_top[i], circle_top[next]);
+    }
+    // Fill corner triangles
+    mesh.add_triangle(corners_top[0], corners_top[1], circle_top[0]);
+    mesh.add_triangle(corners_top[1], corners_top[2], circle_top[SEGMENTS / 4]);
+    mesh.add_triangle(corners_top[2], corners_top[3], circle_top[SEGMENTS / 2]);
+    mesh.add_triangle(corners_top[3], corners_top[0], circle_top[3 * SEGMENTS / 4]);
+
+    // Bottom face with hole (z=0)
+    let corners_bot = [
+        mesh.add_vertex([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]),
+        mesh.add_vertex([w, 0.0, 0.0], [0.0, 0.0, -1.0]),
+        mesh.add_vertex([w, d, 0.0], [0.0, 0.0, -1.0]),
+        mesh.add_vertex([0.0, d, 0.0], [0.0, 0.0, -1.0]),
+    ];
+    let mut circle_bot = Vec::new();
+    for i in 0..SEGMENTS {
+        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
+        circle_bot.push(mesh.add_vertex(
+            [cx + hole_r * angle.cos(), cy + hole_r * angle.sin(), 0.0],
+            [0.0, 0.0, -1.0],
+        ));
+    }
+    for i in 0..SEGMENTS {
+        let next = (i + 1) % SEGMENTS;
+        let angle = (i as f32 + 0.5) / SEGMENTS as f32 * 2.0 * PI;
+        let corner_idx = if angle < PI / 2.0 { 1 } else if angle < PI { 2 } else if angle < 3.0 * PI / 2.0 { 3 } else { 0 };
+        mesh.add_triangle(corners_bot[corner_idx], circle_bot[next], circle_bot[i]);
+    }
+    mesh.add_triangle(corners_bot[0], circle_bot[0], corners_bot[1]);
+    mesh.add_triangle(corners_bot[1], circle_bot[SEGMENTS / 4], corners_bot[2]);
+    mesh.add_triangle(corners_bot[2], circle_bot[SEGMENTS / 2], corners_bot[3]);
+    mesh.add_triangle(corners_bot[3], circle_bot[3 * SEGMENTS / 4], corners_bot[0]);
+
+    mesh
+}
+
 fn procedural_sphere(radius: f32) -> MeshData {
     let mut mesh = MeshData::new();
     let stacks = 32usize;
@@ -440,9 +537,88 @@ fn try_build_tube(table: &mlua::Table) -> Option<MeshData> {
     Some(mesh)
 }
 
+/// Check if this is a box-cylinder difference (box with hole) and handle it specially
+fn try_build_box_with_hole(table: &mlua::Table) -> Option<MeshData> {
+    let obj_type: String = table.get("type").ok()?;
+    if obj_type != "csg" {
+        return None;
+    }
+
+    let operation: String = table.get("operation").ok()?;
+    if operation != "difference" {
+        return None;
+    }
+
+    let children: mlua::Table = table.get("children").ok()?;
+    if children.len().ok()? != 2 {
+        return None;
+    }
+
+    let child1: mlua::Table = children.get(1).ok()?;
+    let child2: mlua::Table = children.get(2).ok()?;
+
+    let type1: String = child1.get("type").ok()?;
+    let type2: String = child2.get("type").ok()?;
+
+    if type1 != "box" || type2 != "cylinder" {
+        return None;
+    }
+
+    let params1: mlua::Table = child1.get("params").ok()?;
+    let params2: mlua::Table = child2.get("params").ok()?;
+
+    let w: f32 = params1.get("w").ok()?;
+    let d: f32 = params1.get::<_, f32>("d").unwrap_or(w);
+    let h: f32 = params1.get("h").ok()?;
+    let hole_r: f32 = params2.get("r").ok()?;
+    let hole_h: f32 = params2.get("h").ok()?;
+
+    // Only use if hole goes all the way through
+    if hole_h < h {
+        return None;
+    }
+
+    // Check if box is centered (has centerXY ops)
+    let box_ops: mlua::Table = child1.get("ops").ok()?;
+    let mut is_centered = false;
+    for pair in box_ops.pairs::<i64, mlua::Table>() {
+        if let Ok((_, op)) = pair {
+            let op_name: String = op.get("op").unwrap_or_default();
+            if op_name == "translate" {
+                let tx: f32 = op.get("x").unwrap_or(0.0);
+                let ty: f32 = op.get("y").unwrap_or(0.0);
+                // Check if centered (translated by -w/2, -d/2)
+                if (tx + w / 2.0).abs() < 0.01 && (ty + d / 2.0).abs() < 0.01 {
+                    is_centered = true;
+                }
+            }
+        }
+    }
+
+    if !is_centered {
+        return None;
+    }
+
+    let mut mesh = procedural_box_with_hole(w, d, h, hole_r);
+
+    // Shift back to centered position
+    apply_translate(&mut mesh, -w / 2.0, -d / 2.0, 0.0);
+
+    // Apply ops from the CSG node
+    apply_ops(&mut mesh, table);
+    apply_material_color(&mut mesh, table);
+
+    Some(mesh)
+}
+
 /// Build mesh from a serialized object
 fn build_object(table: &mlua::Table) -> Result<MeshData> {
     let obj_type: String = table.get("type")?;
+
+    // Try special case: box-cylinder difference = box with hole
+    if let Some(box_hole) = try_build_box_with_hole(table) {
+        return Ok(box_hole);
+    }
 
     // Try special case: cylinder-cylinder difference = tube
     if let Some(tube) = try_build_tube(table) {
@@ -629,7 +805,7 @@ fn csg_mesh_to_data(mesh: &CsgMesh<()>) -> MeshData {
     data
 }
 
-/// Generate mesh from Lua scene
+/// Generate mesh from Lua scene (all objects combined)
 pub fn generate_mesh_from_lua(_lua: &Lua, value: &Value) -> Result<MeshData> {
     let table = value.as_table().ok_or_else(|| anyhow!("Expected table"))?;
     let objects: mlua::Table = table.get("objects")?;
@@ -643,4 +819,9 @@ pub fn generate_mesh_from_lua(_lua: &Lua, value: &Value) -> Result<MeshData> {
     }
 
     Ok(combined)
+}
+
+/// Generate mesh from a single serialized object
+pub fn generate_mesh_from_object(_lua: &Lua, table: &mlua::Table) -> Result<MeshData> {
+    build_object(table)
 }

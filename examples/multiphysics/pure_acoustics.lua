@@ -229,8 +229,12 @@ local assembly = group("pure_acoustics", {
 
 ScriptCAD.register(assembly)
 
--- Export STL for 3D printing (units: mm)
-export_stl("pure_acoustics.stl", assembly)
+-- Export individual STL files for 3D printing (units: mm)
+export_stl("icd.stl", icd_assembly)
+export_stl("medium.stl", Medium.model)
+export_stl("microscope.stl", Microscope.model)
+export_stl("holder_adapter.stl", HolderAdapter.model)
+export_stl("lid.stl", Lid.model)
 
 -- ===========================
 -- Acoustic Simulation

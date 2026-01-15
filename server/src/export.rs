@@ -1,7 +1,7 @@
 //! STL Export - Binary STL file generation for 3D printing
 //! Units: millimeters, manifold meshes
 
-use crate::geometry::MeshData;
+use crate::geometry::{self, MeshData};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -12,9 +12,11 @@ pub fn write_stl(mesh: &MeshData, path: &Path) -> std::io::Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
-    // 80-byte header
-    let header = format!("ScriptCAD STL - units: mm{}", " ".repeat(80 - 27));
-    writer.write_all(&header.as_bytes()[..80])?;
+    // 80-byte header (padded with zeros)
+    let mut header = [0u8; 80];
+    let text = b"ScriptCAD STL - units: mm";
+    header[..text.len()].copy_from_slice(text);
+    writer.write_all(&header)?;
 
     // Triangle count
     let num_triangles = (mesh.indices.len() / 3) as u32;
@@ -87,38 +89,38 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// Process export queue from Lua scene
-pub fn process_exports(exports: &[ExportRequest], mesh: &MeshData, base_dir: &Path) {
-    for export in exports {
-        if export.format == "stl" {
-            let path = base_dir.join(&export.filename);
-            if let Err(e) = write_stl(mesh, &path) {
-                tracing::error!("STL export failed: {}", e);
+/// Process exports directly from the result table
+pub fn process_exports_from_table(lua: &mlua::Lua, table: &mlua::Table, base_dir: &Path) {
+    let exports = match table.get::<_, mlua::Table>("exports") {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for pair in exports.pairs::<i32, mlua::Table>() {
+        if let Ok((_, exp)) = pair {
+            let format: String = exp.get("format").unwrap_or_default();
+            let filename: String = exp.get("filename").unwrap_or_default();
+
+            if format != "stl" || filename.is_empty() {
+                continue;
             }
-        }
-    }
-}
 
-#[derive(Debug)]
-pub struct ExportRequest {
-    pub format: String,
-    pub filename: String,
-}
+            let object: mlua::Table = match exp.get("object") {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
 
-pub fn parse_exports(table: &mlua::Table) -> Vec<ExportRequest> {
-    let mut requests = Vec::new();
-
-    if let Ok(exports) = table.get::<_, mlua::Table>("exports") {
-        for pair in exports.pairs::<i32, mlua::Table>() {
-            if let Ok((_, exp)) = pair {
-                let format: String = exp.get("format").unwrap_or_default();
-                let filename: String = exp.get("filename").unwrap_or_default();
-                if !format.is_empty() && !filename.is_empty() {
-                    requests.push(ExportRequest { format, filename });
+            let path = base_dir.join(&filename);
+            match geometry::generate_mesh_from_object(lua, &object) {
+                Ok(mesh) => {
+                    if let Err(e) = write_stl(&mesh, &path) {
+                        tracing::error!("STL export failed for {}: {}", filename, e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Mesh generation failed for {}: {}", filename, e);
                 }
             }
         }
     }
-
-    requests
 }

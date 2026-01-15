@@ -123,23 +123,19 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
     }
 
     while let Some((content, file_path)) = rx.blocking_recv() {
-        // Process mesh
-        match process_single_file(&lua, &content) {
-            Ok(result) => {
-                let binary = result.mesh.to_binary();
+        let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
+
+        // Process mesh and exports
+        match process_single_file(&lua, &content, base_dir) {
+            Ok(mesh) => {
+                let binary = mesh.to_binary();
                 info!(
                     "Generated mesh: {} vertices, {} triangles, {} bytes",
-                    result.mesh.positions.len() / 3,
-                    result.mesh.indices.len() / 3,
+                    mesh.positions.len() / 3,
+                    mesh.indices.len() / 3,
                     binary.len()
                 );
                 let _ = tx.send(binary);
-
-                // Process exports
-                if !result.exports.is_empty() {
-                    let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
-                    export::process_exports(&result.exports, &result.mesh, base_dir);
-                }
             }
             Err(e) => error!("Lua error: {}", e),
         }
@@ -294,12 +290,7 @@ fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<Vec<u8>> {
     }
 }
 
-struct ProcessResult {
-    mesh: geometry::MeshData,
-    exports: Vec<export::ExportRequest>,
-}
-
-fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<ProcessResult> {
+fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Path) -> Result<geometry::MeshData> {
     // Clear scene state before each execution to prevent accumulation
     let _ = lua.load(r#"
         local loaded = package.loaded["stdlib"] or package.loaded["stdlib.init"]
@@ -309,14 +300,12 @@ fn process_single_file(lua: &mlua::Lua, content: &str) -> Result<ProcessResult> 
     let result: mlua::Value = lua.load(content).eval()?;
     let mesh = geometry::generate_mesh_from_lua(lua, &result)?;
 
-    // Parse export requests
-    let exports = if let Some(table) = result.as_table() {
-        export::parse_exports(table)
-    } else {
-        Vec::new()
-    };
+    // Process exports directly from the result table
+    if let Some(table) = result.as_table() {
+        export::process_exports_from_table(lua, table, base_dir);
+    }
 
-    Ok(ProcessResult { mesh, exports })
+    Ok(mesh)
 }
 
 async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>) {
