@@ -26,6 +26,8 @@ mod circuit;
 mod export;
 mod field;
 mod geometry;
+#[cfg(feature = "manifold")]
+mod geometry_manifold;
 
 struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
@@ -298,10 +300,23 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
     "#).exec();
 
     let result: mlua::Value = lua.load(content).eval()?;
+
+    // Use manifold backend if feature is enabled
+    #[cfg(feature = "manifold")]
+    let mesh = {
+        info!("Using Manifold backend for CSG");
+        geometry_manifold::generate_mesh_from_lua_manifold(lua, &result)?
+    };
+
+    #[cfg(not(feature = "manifold"))]
     let mesh = geometry::generate_mesh_from_lua(lua, &result)?;
 
     // Process exports directly from the result table
     if let Some(table) = result.as_table() {
+        #[cfg(feature = "manifold")]
+        export::process_exports_from_table_manifold(lua, table, base_dir);
+
+        #[cfg(not(feature = "manifold"))]
         export::process_exports_from_table(lua, table, base_dir);
     }
 

@@ -89,7 +89,7 @@ fn normalize(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// Process exports directly from the result table
+/// Process exports directly from the result table (csgrs backend)
 pub fn process_exports_from_table(lua: &mlua::Lua, table: &mlua::Table, base_dir: &Path) {
     let exports = match table.get::<_, mlua::Table>("exports") {
         Ok(e) => e,
@@ -112,6 +112,45 @@ pub fn process_exports_from_table(lua: &mlua::Lua, table: &mlua::Table, base_dir
 
             let path = base_dir.join(&filename);
             match geometry::generate_mesh_from_object(lua, &object) {
+                Ok(mesh) => {
+                    if let Err(e) = write_stl(&mesh, &path) {
+                        tracing::error!("STL export failed for {}: {}", filename, e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Mesh generation failed for {}: {}", filename, e);
+                }
+            }
+        }
+    }
+}
+
+/// Process exports using Manifold backend (guaranteed manifold output)
+#[cfg(feature = "manifold")]
+pub fn process_exports_from_table_manifold(lua: &mlua::Lua, table: &mlua::Table, base_dir: &Path) {
+    use crate::geometry_manifold;
+
+    let exports = match table.get::<_, mlua::Table>("exports") {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for pair in exports.pairs::<i32, mlua::Table>() {
+        if let Ok((_, exp)) = pair {
+            let format: String = exp.get("format").unwrap_or_default();
+            let filename: String = exp.get("filename").unwrap_or_default();
+
+            if format != "stl" || filename.is_empty() {
+                continue;
+            }
+
+            let object: mlua::Table = match exp.get("object") {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+
+            let path = base_dir.join(&filename);
+            match geometry_manifold::generate_mesh_from_object_manifold(lua, &object) {
                 Ok(mesh) => {
                     if let Err(e) = write_stl(&mesh, &path) {
                         tracing::error!("STL export failed for {}: {}", filename, e);

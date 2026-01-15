@@ -27,6 +27,10 @@ impl MeshData {
         }
     }
 
+    pub fn new_empty() -> Self {
+        Self::new()
+    }
+
     fn add_vertex(&mut self, pos: [f32; 3], normal: [f32; 3]) -> u32 {
         let idx = (self.positions.len() / 3) as u32;
         self.positions.extend_from_slice(&pos);
