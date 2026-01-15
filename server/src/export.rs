@@ -150,6 +150,15 @@ pub fn process_exports_from_table_manifold(lua: &mlua::Lua, table: &mlua::Table,
             };
 
             let path = base_dir.join(&filename);
+
+            // Debug: check if ops exist
+            if let Ok(ops) = object.get::<_, mlua::Table>("ops") {
+                let len = ops.len().unwrap_or(0);
+                tracing::debug!("Export {}: {} ops found", filename, len);
+            } else {
+                tracing::debug!("Export {}: no ops table", filename);
+            }
+
             match geometry_manifold::generate_mesh_from_object_manifold(lua, &object) {
                 Ok(mesh) => {
                     if let Err(e) = write_stl(&mesh, &path) {

@@ -145,22 +145,25 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table) -> Result<Mani
         "cylinder" => {
             let r: f64 = params.get("r")?;
             let h: f64 = params.get("h")?;
+            // origin_at_center = false: base at z=0, extends to z=h
             Ok(Manifold::new_cylinder(
                 pos(h),
                 pos(r),
                 None::<PositiveF64>,
                 None::<manifold3d::types::PositiveI32>,
-                true,
+                false,
             ))
         }
         "box" => {
             let w: f64 = params.get("w")?;
             let d: f64 = params.get::<_, f64>("d").unwrap_or(w);
             let h: f64 = params.get("h")?;
-            Ok(Manifold::new_cuboid(pos(w), pos(d), pos(h), true))
+            // origin_at_center = false: corner at origin, extends to (w, d, h)
+            Ok(Manifold::new_cuboid(pos(w), pos(d), pos(h), false))
         }
         "sphere" => {
             let r: f64 = params.get("r")?;
+            // Spheres are always centered at origin
             Ok(Manifold::new_sphere(
                 pos(r),
                 None::<manifold3d::types::PositiveI32>,
@@ -168,7 +171,7 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table) -> Result<Mani
         }
         "cube" => {
             let size: f64 = params.get("size").unwrap_or(1.0);
-            Ok(Manifold::new_cuboid(pos(size), pos(size), pos(size), true))
+            Ok(Manifold::new_cuboid(pos(size), pos(size), pos(size), false))
         }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }
@@ -184,6 +187,8 @@ fn apply_manifold_ops(manifold: Manifold, table: &mlua::Table) -> Result<Manifol
                 let x: f64 = op_table.get("x").unwrap_or(0.0);
                 let y: f64 = op_table.get("y").unwrap_or(0.0);
                 let z: f64 = op_table.get("z").unwrap_or(0.0);
+
+                tracing::debug!("Applying op: {} ({}, {}, {})", op, x, y, z);
 
                 result = match op.as_str() {
                     "translate" => result.translate(Vec3::new(x, y, z)),
@@ -207,6 +212,8 @@ fn apply_manifold_ops(manifold: Manifold, table: &mlua::Table) -> Result<Manifol
 
 fn build_manifold_object(table: &mlua::Table) -> Result<Manifold> {
     let obj_type: String = table.get("type")?;
+    let name: String = table.get("name").unwrap_or_default();
+    tracing::debug!("Building manifold object: type={}, name={}", obj_type, name);
 
     if obj_type == "csg" {
         let operation: String = table.get("operation")?;
