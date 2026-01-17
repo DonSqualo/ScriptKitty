@@ -2,8 +2,7 @@
 //! Uses manifold3d for guaranteed watertight manifold meshes
 
 use anyhow::{anyhow, Result};
-use manifold3d::manifold::Rotation;
-use manifold3d::types::{NormalizedAngle, PositiveF64, Vec3};
+use manifold3d::types::{Matrix4x3, PositiveF64, Vec3};
 use manifold3d::{Manifold, MeshGL};
 use mlua::{Lua, Value};
 use std::alloc::{alloc, Layout};
@@ -193,12 +192,33 @@ fn apply_manifold_ops(manifold: Manifold, table: &mlua::Table) -> Result<Manifol
                 result = match op.as_str() {
                     "translate" => result.translate(Vec3::new(x, y, z)),
                     "rotate" => {
-                        let rotation = Rotation::new(
-                            NormalizedAngle::from_degrees(x as f32),
-                            NormalizedAngle::from_degrees(y as f32),
-                            NormalizedAngle::from_degrees(z as f32),
-                        );
-                        result.rotate(rotation)
+                        // Build rotation matrix from ZYX Euler angles (degrees)
+                        let rx = x.to_radians();
+                        let ry = y.to_radians();
+                        let rz = z.to_radians();
+
+                        let (sx, cx) = (rx.sin(), rx.cos());
+                        let (sy, cy) = (ry.sin(), ry.cos());
+                        let (sz, cz) = (rz.sin(), rz.cos());
+
+                        // ZYX rotation matrix
+                        let m00 = cy * cz;
+                        let m01 = sx * sy * cz - cx * sz;
+                        let m02 = cx * sy * cz + sx * sz;
+                        let m10 = cy * sz;
+                        let m11 = sx * sy * sz + cx * cz;
+                        let m12 = cx * sy * sz - sx * cz;
+                        let m20 = -sy;
+                        let m21 = sx * cy;
+                        let m22 = cx * cy;
+
+                        let matrix = Matrix4x3::new([
+                            Vec3::new(m00, m01, m02),
+                            Vec3::new(m10, m11, m12),
+                            Vec3::new(m20, m21, m22),
+                            Vec3::new(0.0, 0.0, 0.0), // no translation
+                        ]);
+                        result.transform(matrix)
                     }
                     "scale" => result.scale(Vec3::new(x, y, z)),
                     _ => result,
@@ -256,27 +276,178 @@ fn build_manifold_object(table: &mlua::Table) -> Result<Manifold> {
     }
 }
 
-fn apply_material_color(mesh: &mut MeshData, table: &mlua::Table) {
+fn get_material_color(table: &mlua::Table) -> Option<(f32, f32, f32)> {
     if let Ok(material) = table.get::<_, mlua::Table>("material") {
         if let Ok(color) = material.get::<_, mlua::Table>("color") {
             let r: f32 = color.get(1).unwrap_or(1.0);
             let g: f32 = color.get(2).unwrap_or(1.0);
             let b: f32 = color.get(3).unwrap_or(1.0);
-            for i in 0..mesh.colors.len() / 3 {
-                mesh.colors[i * 3] = r;
-                mesh.colors[i * 3 + 1] = g;
-                mesh.colors[i * 3 + 2] = b;
+            return Some((r, g, b));
+        }
+    }
+    None
+}
+
+fn apply_color_to_mesh(mesh: &mut MeshData, r: f32, g: f32, b: f32) {
+    for i in 0..mesh.colors.len() / 3 {
+        mesh.colors[i * 3] = r;
+        mesh.colors[i * 3 + 1] = g;
+        mesh.colors[i * 3 + 2] = b;
+    }
+}
+
+fn combine_meshes(meshes: Vec<MeshData>) -> MeshData {
+    let mut combined = MeshData {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        indices: Vec::new(),
+        colors: Vec::new(),
+    };
+
+    for mesh in meshes {
+        let vertex_offset = (combined.positions.len() / 3) as u32;
+        combined.positions.extend(&mesh.positions);
+        combined.normals.extend(&mesh.normals);
+        combined.colors.extend(&mesh.colors);
+        combined.indices.extend(mesh.indices.iter().map(|i| i + vertex_offset));
+    }
+
+    combined
+}
+
+/// Recursively build mesh preserving per-object colors
+fn build_mesh_recursive(table: &mlua::Table) -> Result<MeshData> {
+    let obj_type: String = table.get("type")?;
+
+    if obj_type == "group" {
+        let children: mlua::Table = table.get("children")?;
+        let mut child_meshes = Vec::new();
+
+        for pair in children.pairs::<i64, mlua::Table>() {
+            let (_, child) = pair?;
+            let child_mesh = build_mesh_recursive(&child)?;
+            child_meshes.push(child_mesh);
+        }
+
+        let mut combined = if child_meshes.is_empty() {
+            return Err(anyhow!("Empty group"));
+        } else {
+            combine_meshes(child_meshes)
+        };
+
+        // Apply group-level material if present (overrides children)
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut combined, r, g, b);
+        }
+
+        // Apply group-level transforms
+        if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
+            apply_mesh_transforms(&mut combined, &ops)?;
+        }
+
+        Ok(combined)
+    } else if obj_type == "csg" {
+        // For CSG, we need to use Manifold for correct boolean operations
+        let manifold = build_manifold_object(table)?;
+        let mut mesh = manifold_to_mesh_data(&manifold);
+
+        // Try to get color from result, then from first child
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut mesh, r, g, b);
+        } else if let Ok(children) = table.get::<_, mlua::Table>("children") {
+            if let Ok(first_child) = children.get::<_, mlua::Table>(1) {
+                if let Some((r, g, b)) = get_material_color(&first_child) {
+                    apply_color_to_mesh(&mut mesh, r, g, b);
+                }
+            }
+        }
+
+        Ok(mesh)
+    } else {
+        // Primitive
+        let params: mlua::Table = table.get("params")?;
+        let manifold = build_manifold_primitive(&obj_type, &params)?;
+        let manifold = apply_manifold_ops(manifold, table)?;
+        let mut mesh = manifold_to_mesh_data(&manifold);
+
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut mesh, r, g, b);
+        }
+
+        Ok(mesh)
+    }
+}
+
+fn apply_mesh_transforms(mesh: &mut MeshData, ops: &mlua::Table) -> Result<()> {
+    for pair in ops.clone().pairs::<i64, mlua::Table>() {
+        if let Ok((_, op_table)) = pair {
+            let op: String = op_table.get("op").unwrap_or_default();
+            let x: f64 = op_table.get("x").unwrap_or(0.0);
+            let y: f64 = op_table.get("y").unwrap_or(0.0);
+            let z: f64 = op_table.get("z").unwrap_or(0.0);
+
+            match op.as_str() {
+                "translate" => {
+                    for i in 0..mesh.positions.len() / 3 {
+                        mesh.positions[i * 3] += x as f32;
+                        mesh.positions[i * 3 + 1] += y as f32;
+                        mesh.positions[i * 3 + 2] += z as f32;
+                    }
+                }
+                "rotate" => {
+                    let rx = x.to_radians();
+                    let ry = y.to_radians();
+                    let rz = z.to_radians();
+
+                    let (sx, cx) = (rx.sin() as f32, rx.cos() as f32);
+                    let (sy, cy) = (ry.sin() as f32, ry.cos() as f32);
+                    let (sz, cz) = (rz.sin() as f32, rz.cos() as f32);
+
+                    let m00 = cy * cz;
+                    let m01 = sx * sy * cz - cx * sz;
+                    let m02 = cx * sy * cz + sx * sz;
+                    let m10 = cy * sz;
+                    let m11 = sx * sy * sz + cx * cz;
+                    let m12 = cx * sy * sz - sx * cz;
+                    let m20 = -sy;
+                    let m21 = sx * cy;
+                    let m22 = cx * cy;
+
+                    for i in 0..mesh.positions.len() / 3 {
+                        let px = mesh.positions[i * 3];
+                        let py = mesh.positions[i * 3 + 1];
+                        let pz = mesh.positions[i * 3 + 2];
+
+                        mesh.positions[i * 3] = m00 * px + m01 * py + m02 * pz;
+                        mesh.positions[i * 3 + 1] = m10 * px + m11 * py + m12 * pz;
+                        mesh.positions[i * 3 + 2] = m20 * px + m21 * py + m22 * pz;
+
+                        let nx = mesh.normals[i * 3];
+                        let ny = mesh.normals[i * 3 + 1];
+                        let nz = mesh.normals[i * 3 + 2];
+
+                        mesh.normals[i * 3] = m00 * nx + m01 * ny + m02 * nz;
+                        mesh.normals[i * 3 + 1] = m10 * nx + m11 * ny + m12 * nz;
+                        mesh.normals[i * 3 + 2] = m20 * nx + m21 * ny + m22 * nz;
+                    }
+                }
+                "scale" => {
+                    for i in 0..mesh.positions.len() / 3 {
+                        mesh.positions[i * 3] *= x as f32;
+                        mesh.positions[i * 3 + 1] *= y as f32;
+                        mesh.positions[i * 3 + 2] *= z as f32;
+                    }
+                }
+                _ => {}
             }
         }
     }
+    Ok(())
 }
 
 /// Build mesh from a serialized object using Manifold
 pub fn build_object_manifold(table: &mlua::Table) -> Result<MeshData> {
-    let manifold = build_manifold_object(table)?;
-    let mut mesh = manifold_to_mesh_data(&manifold);
-    apply_material_color(&mut mesh, table);
-    Ok(mesh)
+    build_mesh_recursive(table)
 }
 
 /// Generate mesh from Lua scene using Manifold backend
@@ -284,19 +455,19 @@ pub fn generate_mesh_from_lua_manifold(_lua: &Lua, value: &Value) -> Result<Mesh
     let table = value.as_table().ok_or_else(|| anyhow!("Expected table"))?;
     let objects: mlua::Table = table.get("objects")?;
 
-    let mut combined: Option<Manifold> = None;
+    let mut meshes = Vec::new();
 
     for pair in objects.pairs::<i64, mlua::Table>() {
         let (_, obj) = pair?;
-        let manifold = build_manifold_object(&obj)?;
-        combined = Some(match combined {
-            Some(c) => c.union(&manifold),
-            None => manifold,
-        });
+        let mesh = build_mesh_recursive(&obj)?;
+        meshes.push(mesh);
     }
 
-    let final_manifold = combined.ok_or_else(|| anyhow!("No objects in scene"))?;
-    Ok(manifold_to_mesh_data(&final_manifold))
+    if meshes.is_empty() {
+        return Err(anyhow!("No objects in scene"));
+    }
+
+    Ok(combine_meshes(meshes))
 }
 
 /// Generate mesh from a single serialized object using Manifold
