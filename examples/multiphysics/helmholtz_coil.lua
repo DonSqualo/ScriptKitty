@@ -48,6 +48,20 @@ Bridge = {
   thickness = 2
 }
 Bridge.outer_radius = Resonator.outer_radius + Bridge.thickness + Bridge.distance
+
+Scaffold = {
+  clearance = 1.0,
+  bridge_clearance = 2.0,
+  axial_hole_radius = 5,
+  stopper_width = 3.0,
+  box_wall = 5.0,
+}
+Scaffold.tube_radius = Coil.inner_radius - Scaffold.clearance
+Scaffold.tube_length = Coil.gap + 2 * Coil.width + 2 * Scaffold.stopper_width
+Scaffold.stopper_radius = Coil.outer_radius
+Scaffold.box_length = 2 * Bridge.outer_radius + 2 * Scaffold.box_wall
+Scaffold.box_height = Scaffold.stopper_radius
+
 -- ===========================
 -- Materials
 -- ===========================
@@ -63,6 +77,11 @@ local air = material("air", {
 
 local ptfe = material("ptfe", {
   relative_permittivity = 2.1,
+  relative_permeability = 1.0,
+})
+
+local dark_pla = material("pla", {
+  relative_permittivity = 3.0,
   relative_permeability = 1.0,
 })
 
@@ -123,6 +142,53 @@ Bridge.dielectric = difference(
     -(Bridge.outer_radius + Bridge.width / 2), 0, 0),
   box(Bridge.outer_radius * 2, Bridge.outer_radius, Resonator.height):center(true, false, false)
 ):centered():material(ptfe)
+
+-- ===========================
+-- Geometry: Scaffold
+-- ===========================
+
+local tube_half_length = Scaffold.tube_length / 2
+
+local scaffold_tube = difference(
+  cylinder(Scaffold.tube_radius, Scaffold.tube_length):centered():rotate(0, 90, 0),
+  cylinder(Scaffold.axial_hole_radius, Scaffold.tube_length + 2):centered():rotate(0, 90, 0)
+)
+
+local stopper_length = Coil.width + 2 * Scaffold.stopper_width
+
+local stopper_right_base = difference(
+  cylinder(Scaffold.stopper_radius, stopper_length):centered(),
+  cylinder(Scaffold.tube_radius, stopper_length + 1):centered()
+):rotate(0, 90, 0):at(Coil.right_x, 0, 0)
+
+local stopper_right = difference(stopper_right_base, RightCoil.body):at(0, 0, 0)
+
+local stopper_left_base = difference(
+  cylinder(Scaffold.stopper_radius, stopper_length):centered(),
+  cylinder(Scaffold.tube_radius, stopper_length + 1):centered()
+):rotate(0, 90, 0):at(Coil.left_x, 0, 0)
+
+local stopper_left = difference(stopper_left_base, LeftCoil.body)
+
+local resonator_box = box(Coil.gap, Scaffold.box_length, Scaffold.box_height * 2)
+    :center(true, true, true)
+
+local resonator_cutout = cylinder(Resonator.outer_radius + Scaffold.clearance, Scaffold.box_height * 2 + 2)
+    :centered()
+
+local bridge_cutout = box(
+  Bridge.width + 2 * Scaffold.bridge_clearance,
+  Bridge.outer_radius + Scaffold.bridge_clearance,
+  Scaffold.box_height * 2 + 2
+):center(true, false, true)
+
+Scaffold.body = difference(
+  union(scaffold_tube, stopper_right, stopper_left, resonator_box),
+  resonator_cutout,
+  bridge_cutout,
+  cylinder(Scaffold.axial_hole_radius, Scaffold.tube_length + 2):centered():rotate(0, 90, 0)
+):color(0.15, 0.15, 0.15, 1.0):material(dark_pla)
+
 -- ===========================
 -- Assembly
 -- ===========================
@@ -134,6 +200,7 @@ local assembly = group("helmholtz_coil", {
   ResonatorTube.gap_dielectric,
   Bridge.body,
   Bridge.dielectric,
+  Scaffold.body,
 })
 
 ScriptCAD.register(assembly)
@@ -253,6 +320,14 @@ print(string.format("Center-to-center distance: %.1f mm", Coil.center_distance))
 print(string.format("Helmholtz ratio (d/R): %.3f (ideal = 1.0)", Coil.center_distance / Coil.mean_radius))
 print(string.format("Resonator tube: OD=%.1f mm, ID=%.1f mm, height=%.1f mm", Resonator.outer_radius * 2,
   Resonator.inner_radius * 2, Resonator.height))
+print(string.format("Scaffold tube: OD=%.1f mm, length=%.1f mm", Scaffold.tube_radius * 2, Scaffold.tube_length))
+print(string.format("Scaffold stoppers: OD=%.1f mm, width=%.1f mm", Scaffold.stopper_radius * 2, Scaffold.stopper_width))
+print(string.format("Scaffold resonator box: %.1f x %.1f x %.1f mm (WxLxH)", Coil.gap, Scaffold.box_length,
+  Scaffold.box_height * 2))
+print(string.format("Scaffold bridge cutout: %.1f mm (clearance %.1f mm)",
+  (Bridge.outer_radius + Scaffold.bridge_clearance) * 2, Scaffold.bridge_clearance))
+print(string.format("Scaffold clearance: %.1f mm, axial hole: %.1f mm", Scaffold.clearance,
+  Scaffold.axial_hole_radius * 2))
 print("")
 print("=== Theoretical Field Estimates ===")
 print(string.format("Ampere-turns per coil: %.0f A·turns", ampere_turns))
@@ -260,8 +335,11 @@ print(string.format("Ideal Helmholtz B-field (d=R): %.3f mT", B_ideal * 1000))
 print(string.format("Actual B-field estimate (d=%.1fmm): %.3f mT", Coil.center_distance, B_total * 1000))
 print(string.format("Deviation from ideal: %.1f%%", (B_total / B_ideal - 1) * 100))
 
+export_stl("helmholtz_scaffold.stl", Scaffold.body, 128)
+
 view({
   flat_shading = true,
+  circular_segments = 64,
 })
 
 return ScriptCAD.serialize()

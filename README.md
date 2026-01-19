@@ -56,6 +56,18 @@ server/           # Rust backend
 examples/         # Example scripts
 ```
 
+## Examples
+
+### Helmholtz Coil with Bridge Gap Resonator
+
+`examples/multiphysics/helmholtz_coil.lua` - A Helmholtz coil pair with a bridge gap resonator for uniform magnetic field generation.
+
+Includes a 3D printable scaffold (`helmholtz_scaffold.stl`) with:
+- Tube that fits inside the coil inner radius
+- Stoppers at coil ends and inside the gap
+- Box support for the resonator tube with bridge cutout
+- Axial hole through the coil axis
+
 ## License
 
 MIT

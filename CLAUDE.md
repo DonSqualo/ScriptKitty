@@ -20,6 +20,7 @@ All of the coding rules below are of utmost importance and following them is mor
 - NO "try except" / "try except" blocks - just let it crash
 - ALWAYS use default data types if they can replace the ones in typing (examples: `list` instead of `List`, `dict` instead of `Dict`)
 - Variables in typescript/javascript have snake_case names
+- Do not create redundant variable aliases (e.g. `Scaffold.box_width = Coil.gap`), use the original variable directly
 do not use comments such as 
 -- ============================================================================
 -- Geometry: Polycarbonate Tube
