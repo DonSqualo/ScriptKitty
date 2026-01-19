@@ -275,6 +275,7 @@ view({
   render = {
     quality = "high",
     shadows = false,
+    flat_shading = true,
   }
 })
 
