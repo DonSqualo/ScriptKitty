@@ -41,59 +41,83 @@ const graph_window = document.getElementById('graph-window')!;
 declare function openWindow(id: string): void;
 
 // X-ray material (Fresnel-based transparency with vertex colors)
-// flat_shading: use screen-space derivatives for sharp edges
+// flat_shading: compute per-face normals for sharp edges
 function create_xray_material(flat_shading: boolean = true): THREE.ShaderMaterial {
+  const fragment_smooth = `
+    uniform float fresnelPower;
+    varying vec3 vNormal;
+    varying vec3 vViewPosition;
+    varying vec3 vColor;
+    void main() {
+      vec3 viewDir = normalize(vViewPosition);
+      vec3 normal = normalize(vNormal);
+      float fresnel = pow(1.0 - abs(dot(viewDir, normal)), fresnelPower);
+      float baseOpacity = 0.01 + fresnel * 0.5;
+      float whiteness = min(min(vColor.r, vColor.g), vColor.b);
+      float saturation = max(max(vColor.r, vColor.g), vColor.b) - whiteness;
+      float colorBoost = 1.0 + saturation * 3.0;
+      float whiteReduce = 1.0 - whiteness * 0.7;
+      float opacity = baseOpacity * colorBoost * whiteReduce;
+      gl_FragColor = vec4(vColor, opacity);
+    }
+  `;
+
+  const fragment_flat = `
+    uniform float fresnelPower;
+    varying vec3 vViewPosition;
+    varying vec3 vWorldPosition;
+    varying vec3 vColor;
+    void main() {
+      vec3 viewDir = normalize(vViewPosition);
+      vec3 dx = dFdx(vWorldPosition);
+      vec3 dy = dFdy(vWorldPosition);
+      vec3 normal = normalize(cross(dy, dx));
+      if (dot(normal, viewDir) < 0.0) normal = -normal;
+      float fresnel = pow(1.0 - abs(dot(viewDir, normal)), fresnelPower);
+      float baseOpacity = 0.01 + fresnel * 0.5;
+      float whiteness = min(min(vColor.r, vColor.g), vColor.b);
+      float saturation = max(max(vColor.r, vColor.g), vColor.b) - whiteness;
+      float colorBoost = 1.0 + saturation * 3.0;
+      float whiteReduce = 1.0 - whiteness * 0.7;
+      float opacity = baseOpacity * colorBoost * whiteReduce;
+      gl_FragColor = vec4(vColor, opacity);
+    }
+  `;
+
+  const vertex_smooth = `
+    attribute vec3 color;
+    varying vec3 vNormal;
+    varying vec3 vViewPosition;
+    varying vec3 vColor;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      vColor = color;
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      vViewPosition = -mvPosition.xyz;
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+  const vertex_flat = `
+    attribute vec3 color;
+    varying vec3 vViewPosition;
+    varying vec3 vWorldPosition;
+    varying vec3 vColor;
+    void main() {
+      vColor = color;
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      vViewPosition = -mvPosition.xyz;
+      vWorldPosition = mvPosition.xyz;
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
   return new THREE.ShaderMaterial({
     uniforms: {
       fresnelPower: { value: 2.0 },
-      flatShading: { value: flat_shading },
     },
-    vertexShader: `
-      attribute vec3 color;
-      varying vec3 vNormal;
-      varying vec3 vViewPosition;
-      varying vec3 vWorldPosition;
-      varying vec3 vColor;
-      void main() {
-        vNormal = normalize(normalMatrix * normal);
-        vColor = color;
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        vViewPosition = -mvPosition.xyz;
-        vWorldPosition = mvPosition.xyz;
-        gl_Position = projectionMatrix * mvPosition;
-      }
-    `,
-    fragmentShader: `
-      #extension GL_OES_standard_derivatives : enable
-      uniform float fresnelPower;
-      uniform bool flatShading;
-      varying vec3 vNormal;
-      varying vec3 vViewPosition;
-      varying vec3 vWorldPosition;
-      varying vec3 vColor;
-      void main() {
-        vec3 normal;
-        if (flatShading) {
-          // Compute flat normal from screen-space derivatives
-          vec3 dx = dFdx(vWorldPosition);
-          vec3 dy = dFdy(vWorldPosition);
-          normal = normalize(cross(dx, dy));
-        } else {
-          normal = normalize(vNormal);
-        }
-        vec3 viewDir = normalize(vViewPosition);
-        float fresnel = pow(1.0 - abs(dot(viewDir, normal)), fresnelPower);
-        float baseOpacity = 0.01 + fresnel * 0.5;
-        // Detect how "white" the color is (all channels near 1.0)
-        float whiteness = min(min(vColor.r, vColor.g), vColor.b);
-        float saturation = max(max(vColor.r, vColor.g), vColor.b) - whiteness;
-        // Reduce white opacity, boost colored surfaces
-        float colorBoost = 1.0 + saturation * 3.0;
-        float whiteReduce = 1.0 - whiteness * 0.7;
-        float opacity = baseOpacity * colorBoost * whiteReduce;
-        gl_FragColor = vec4(vColor, opacity);
-      }
-    `,
+    vertexShader: flat_shading ? vertex_flat : vertex_smooth,
+    fragmentShader: flat_shading ? fragment_flat : fragment_smooth,
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,
