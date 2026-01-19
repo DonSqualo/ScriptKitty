@@ -29,10 +29,7 @@ View._state = {
     size = 20,
   },
   render = {
-    quality = "high",  -- low, medium, high
-    shadows = true,
-    ambient_occlusion = true,
-    anti_aliasing = true,
+    flat_shading = false,
   }
 }
 
@@ -134,11 +131,16 @@ function View.view(config)
     end
   end
 
-  -- Render quality
+  -- Render settings
   if config.render then
     for k, v in pairs(config.render) do
       View._state.render[k] = v
     end
+  end
+
+  -- Top-level flat_shading shortcut
+  if config.flat_shading ~= nil then
+    View._state.render.flat_shading = config.flat_shading
   end
 
   return View._state
@@ -246,15 +248,7 @@ end
 -- @return Serialized view state
 function View.serialize()
   return {
-    camera = View._state.camera,
-    visible = View._state.visible,
-    hidden = View._state.hidden,
-    clip = View._state.clip,
-    transparency = View._state.transparency,
-    theme = View._state.theme,
-    grid = View._state.grid,
-    axes = View._state.axes,
-    render = View._state.render,
+    flat_shading = View._state.render.flat_shading,
   }
 end
 

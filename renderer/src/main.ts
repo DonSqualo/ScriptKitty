@@ -26,6 +26,7 @@ controls.target.set(0, 0, 20); // Look at slightly above origin
 let current_mesh: THREE.Mesh | null = null;
 let arrows_group: THREE.Group | null = null;
 let field_plane: THREE.Mesh | null = null;
+let flat_shading: boolean = true;
 
 // Circuit overlay element and 3D anchor
 const circuit_overlay = document.getElementById('circuit-overlay')!;
@@ -508,6 +509,14 @@ function update_mesh(buffer: ArrayBuffer) {
   const header_5 = String.fromCharCode(...header.slice(0, 5));
   const header_8 = String.fromCharCode(...header);
 
+  // Handle view config
+  if (header_8.startsWith('VIEW')) {
+    const view = new DataView(buffer);
+    flat_shading = view.getUint8(8) === 1;
+    console.log(`View config: flat_shading=${flat_shading}`);
+    return;
+  }
+
   // Handle circuit data
   if (header_8 === 'CIRCUIT\0') {
     const circuit_data = parse_circuit_data(buffer);
@@ -577,7 +586,7 @@ function update_mesh(buffer: ArrayBuffer) {
   const geometry = parse_binary_mesh(buffer);
   if (!geometry) return;
 
-  const material = create_xray_material();
+  const material = create_xray_material(flat_shading);
   current_mesh = new THREE.Mesh(geometry, material);
   scene.add(current_mesh);
 }

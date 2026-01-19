@@ -108,6 +108,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn serialize_view_config(flat_shading: bool) -> Vec<u8> {
+    let mut data = Vec::with_capacity(16);
+    data.extend_from_slice(b"VIEW\0\0\0\0");
+    data.push(if flat_shading { 1 } else { 0 });
+    data
+}
+
 fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mpsc::UnboundedSender<Vec<u8>>) {
     let lua = mlua::Lua::new();
 
@@ -129,13 +136,18 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
 
         // Process mesh and exports
         match process_single_file(&lua, &content, base_dir) {
-            Ok(mesh) => {
-                let binary = mesh.to_binary();
+            Ok(result) => {
+                // Send view config first
+                let view_binary = serialize_view_config(result.flat_shading);
+                let _ = tx.send(view_binary);
+
+                let binary = result.mesh.to_binary();
                 info!(
-                    "Generated mesh: {} vertices, {} triangles, {} bytes",
-                    mesh.positions.len() / 3,
-                    mesh.indices.len() / 3,
-                    binary.len()
+                    "Generated mesh: {} vertices, {} triangles, {} bytes, flat_shading={}",
+                    result.mesh.positions.len() / 3,
+                    result.mesh.indices.len() / 3,
+                    binary.len(),
+                    result.flat_shading
                 );
                 let _ = tx.send(binary);
             }
@@ -292,7 +304,12 @@ fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<Vec<u8>> {
     }
 }
 
-fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Path) -> Result<geometry::MeshData> {
+struct ProcessResult {
+    mesh: geometry::MeshData,
+    flat_shading: bool,
+}
+
+fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Path) -> Result<ProcessResult> {
     // Clear scene state before each execution to prevent accumulation
     let _ = lua.load(r#"
         local loaded = package.loaded["stdlib"] or package.loaded["stdlib.init"]
@@ -300,6 +317,17 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
     "#).exec();
 
     let result: mlua::Value = lua.load(content).eval()?;
+
+    // Extract view config
+    let flat_shading = if let Some(table) = result.as_table() {
+        if let Ok(view) = table.get::<_, mlua::Table>("view") {
+            view.get::<_, bool>("flat_shading").unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
 
     // Use manifold backend if feature is enabled
     #[cfg(feature = "manifold")]
@@ -320,7 +348,7 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
         export::process_exports_from_table(lua, table, base_dir);
     }
 
-    Ok(mesh)
+    Ok(ProcessResult { mesh, flat_shading })
 }
 
 async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>) {

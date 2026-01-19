@@ -98,7 +98,7 @@ ResonatorTube.body = difference(
 ):centered():material(copper)
 
 ResonatorTube.gap_dielectric = box(Resonator.gap, Resonator.wall, Resonator.height)
-  :center(true, false, true):at(0, -Resonator.outer_radius, 0):material(ptfe)
+    :center(true, false, true):at(0, -Resonator.outer_radius, 0):material(ptfe)
 
 -- ===========================
 -- Geometry: Bridge
@@ -107,16 +107,20 @@ ResonatorTube.gap_dielectric = box(Resonator.gap, Resonator.wall, Resonator.heig
 Bridge.body = difference(
   cylinder(Bridge.outer_radius, Resonator.height),
   cylinder(Resonator.outer_radius + Bridge.distance, Resonator.height),
-  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(Bridge.width / 2, 0, 0),
-  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(-(Bridge.outer_radius + Bridge.width / 2), 0, 0),
+  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(Bridge.width / 2, 0,
+    0),
+  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(
+    -(Bridge.outer_radius + Bridge.width / 2), 0, 0),
   box(Bridge.outer_radius * 2, Bridge.outer_radius, Resonator.height):center(true, false, false)
 ):centered():material(copper)
 
 Bridge.dielectric = difference(
   cylinder(Resonator.outer_radius + Bridge.distance, Resonator.height),
   cylinder(Resonator.outer_radius, Resonator.height),
-  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(Bridge.width / 2, 0, 0),
-  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(-(Bridge.outer_radius + Bridge.width / 2), 0, 0),
+  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(Bridge.width / 2, 0,
+    0),
+  box(Bridge.outer_radius, Bridge.outer_radius * 2, Resonator.height):center(false, true, false):at(
+    -(Bridge.outer_radius + Bridge.width / 2), 0, 0),
   box(Bridge.outer_radius * 2, Bridge.outer_radius, Resonator.height):center(true, false, false)
 ):centered():material(ptfe)
 -- ===========================
@@ -256,27 +260,8 @@ print(string.format("Ideal Helmholtz B-field (d=R): %.3f mT", B_ideal * 1000))
 print(string.format("Actual B-field estimate (d=%.1fmm): %.3f mT", Coil.center_distance, B_total * 1000))
 print(string.format("Deviation from ideal: %.1f%%", (B_total / B_ideal - 1) * 100))
 
--- ===========================
--- View Configuration
--- ===========================
-
 view({
-  camera = "isometric",
-  distance = Coil.mean_radius * 4,
-  target = { 0, 0, 0 },
-  clip = {
-    plane = "XY",
-    offset = 0,
-    show_caps = true
-  },
-  show = { "helmholtz_coil" },
-  theme = "dark",
-  axes = { show = true, size = Coil.mean_radius * 0.5 },
-  render = {
-    quality = "high",
-    shadows = false,
-    flat_shading = true,
-  }
+  flat_shading = true,
 })
 
 return ScriptCAD.serialize()
