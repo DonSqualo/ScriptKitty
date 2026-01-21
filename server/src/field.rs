@@ -200,6 +200,71 @@ fn compute_field(loops: &[CurrentLoop], point: [f64; 3]) -> [f64; 3] {
     b
 }
 
+/// Measurement result from a GaussMeter or similar point probe
+#[derive(Clone, Debug)]
+pub struct PointMeasurement {
+    pub position: [f64; 3],
+    pub value: [f64; 3],  // Bx, By, Bz in Tesla
+    pub magnitude: f64,   // |B| in Tesla
+    pub label: String,
+}
+
+impl PointMeasurement {
+    pub fn to_binary(&self) -> Vec<u8> {
+        let mut data = Vec::with_capacity(40);
+        data.extend_from_slice(b"MEASURE\0");
+        for &p in &self.position {
+            data.extend_from_slice(&(p as f32).to_le_bytes());
+        }
+        for &v in &self.value {
+            data.extend_from_slice(&(v as f32).to_le_bytes());
+        }
+        data.extend_from_slice(&(self.magnitude as f32).to_le_bytes());
+        let label_bytes = self.label.as_bytes();
+        data.extend_from_slice(&(label_bytes.len() as u32).to_le_bytes());
+        data.extend_from_slice(label_bytes);
+        data
+    }
+}
+
+/// Compute magnetic field at a specific point for GaussMeter measurements
+/// Uses same Helmholtz coil configuration as visualization
+pub fn compute_point_field(
+    coil_inner_r: f64,
+    coil_outer_r: f64,
+    coil_width: f64,
+    gap: f64,
+    ampere_turns: f64,
+    num_layers: usize,
+    point: [f64; 3],
+) -> [f64; 3] {
+    let mut loops = Vec::new();
+
+    let coil_z = gap / 2.0 + coil_width / 2.0;
+    let dr = (coil_outer_r - coil_inner_r) / num_layers as f64;
+    let at_per_layer = ampere_turns / num_layers as f64;
+
+    for layer in 0..num_layers {
+        let r = coil_inner_r + (layer as f64 + 0.5) * dr;
+
+        loops.push(CurrentLoop {
+            center: [0.0, 0.0, coil_z],
+            radius: r,
+            normal: [0.0, 0.0, 1.0],
+            ampere_turns: at_per_layer,
+        });
+
+        loops.push(CurrentLoop {
+            center: [0.0, 0.0, -coil_z],
+            radius: r,
+            normal: [0.0, 0.0, 1.0],
+            ampere_turns: at_per_layer,
+        });
+    }
+
+    compute_field(&loops, point)
+}
+
 /// Generate field visualization data for Helmholtz coil configuration
 pub fn compute_helmholtz_field(
     _coil_radius: f64,     // Mean radius (mm) - unused, kept for API compatibility

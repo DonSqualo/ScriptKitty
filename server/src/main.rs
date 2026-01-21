@@ -26,6 +26,7 @@ mod circuit;
 mod export;
 mod field;
 mod geometry;
+mod nanovna;
 
 struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
@@ -211,6 +212,33 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             );
             let _ = tx.send(circuit_binary);
         }
+
+        // Compute GaussMeter point measurements
+        let gaussmeter_measurements = try_compute_gaussmeter_measurements(&lua, &content);
+        for m in &gaussmeter_measurements {
+            let binary = m.to_binary();
+            let _ = tx.send(binary);
+        }
+
+        // Compute Hydrophone point measurements
+        let hydrophone_measurements = try_compute_hydrophone_measurements(&lua, &content);
+        for (x, y, z, magnitude, label) in &hydrophone_measurements {
+            info!(
+                "Hydrophone measurement '{}': position=({:.1}, {:.1}, {:.1}), magnitude={:.6}",
+                label, x, y, z, magnitude
+            );
+        }
+
+        // Compute NanoVNA frequency sweep if configured
+        if let Some(sweep) = try_compute_nanovna_sweep(&lua, &content) {
+            let sweep_binary = sweep.to_binary();
+            info!(
+                "Generated NanoVNA sweep: {} points, {} bytes",
+                sweep.points.len(),
+                sweep_binary.len()
+            );
+            let _ = tx.send(sweep_binary);
+        }
     }
 }
 
@@ -222,7 +250,7 @@ fn parse_plane_type(plane_str: &str) -> field::PlaneType {
     }
 }
 
-fn get_field_plane_config(lua: &mlua::Lua) -> (field::PlaneType, f64, field::Colormap) {
+fn get_field_plane_config(lua: &mlua::Lua, instrument_type: &str) -> (field::PlaneType, f64, field::Colormap) {
     let globals = lua.globals();
 
     let instruments: mlua::Table = match globals.get("Instruments") {
@@ -246,7 +274,7 @@ fn get_field_plane_config(lua: &mlua::Lua) -> (field::PlaneType, f64, field::Col
             Err(_) => continue,
         };
 
-        if inst_type == "field_plane" {
+        if inst_type == instrument_type {
             let config: mlua::Table = match inst.get("_config") {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -291,7 +319,7 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
     let coil_outer_r = coil_mean_radius + coil_height / 2.0;
     let ampere_turns = current * windings;
 
-    let (plane_type, plane_offset, colormap) = get_field_plane_config(lua);
+    let (plane_type, plane_offset, colormap) = get_field_plane_config(lua, "field_plane");
 
     info!(
         "Computing Helmholtz field: R={:.1}mm, gap={:.1}mm, {:.0} A·turns, plane={:?}, offset={:.1}mm, colormap={:?}",
@@ -361,12 +389,267 @@ fn try_compute_acoustic_field(lua: &mlua::Lua, content: &str) -> Option<field::F
         drive_amplitude,
     };
 
+    let (plane_type, plane_offset, colormap) = get_field_plane_config(lua, "acoustic_pressure_plane");
+
     info!(
-        "Computing acoustic field: f={:.0}Hz, R={:.1}mm, z={:.1}mm",
-        config.frequency, config.transducer_radius, config.transducer_z
+        "Computing acoustic field: f={:.0}Hz, R={:.1}mm, z={:.1}mm, plane={:?}, offset={:.1}mm, colormap={:?}",
+        config.frequency, config.transducer_radius, config.transducer_z, plane_type, plane_offset, colormap
     );
 
-    Some(acoustic::compute_acoustic_field(&config))
+    Some(acoustic::compute_acoustic_field(&config, plane_type, plane_offset, colormap))
+}
+
+/// Process GaussMeter instruments and compute B-field at their positions
+fn try_compute_gaussmeter_measurements(lua: &mlua::Lua, content: &str) -> Vec<field::PointMeasurement> {
+    let mut measurements = Vec::new();
+
+    if !content.contains("helmholtz") && !content.contains("coil_mean_radius") {
+        return measurements;
+    }
+
+    let globals = lua.globals();
+
+    // Get coil configuration
+    let config: mlua::Table = match globals.get("config") {
+        Ok(c) => c,
+        Err(_) => return measurements,
+    };
+
+    let coil_mean_radius: f64 = match config.get("coil_mean_radius") {
+        Ok(v) => v,
+        Err(_) => return measurements,
+    };
+    let gap: f64 = config.get("gap").unwrap_or(coil_mean_radius);
+    let wire_diameter: f64 = config.get("wire_diameter").unwrap_or(0.8);
+    let windings: f64 = config.get("windings").unwrap_or(100.0);
+    let layers: f64 = config.get("layers").unwrap_or(10.0);
+    let packing_factor: f64 = config.get("packing_factor").unwrap_or(0.82);
+    let current: f64 = config.get("current").unwrap_or(1.0);
+
+    let turns_per_layer = (windings / layers).ceil();
+    let wire_pitch = wire_diameter / packing_factor;
+    let coil_height = layers * wire_pitch;
+    let coil_inner_r = coil_mean_radius - coil_height / 2.0;
+    let coil_outer_r = coil_mean_radius + coil_height / 2.0;
+    let coil_width = turns_per_layer * wire_pitch;
+    let ampere_turns = current * windings;
+
+    // Find GaussMeter instruments
+    let instruments: mlua::Table = match globals.get("Instruments") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+
+    let active: mlua::Table = match instruments.get("_active") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+
+    for pair in active.pairs::<i64, mlua::Table>() {
+        let (_, inst) = match pair {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let inst_type: String = match inst.get("_instrument_type") {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        if inst_type != "gaussmeter" {
+            continue;
+        }
+
+        let position: mlua::Table = match inst.get("_position") {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let x: f64 = position.get(1).unwrap_or(0.0);
+        let y: f64 = position.get(2).unwrap_or(0.0);
+        let z: f64 = position.get(3).unwrap_or(0.0);
+
+        let config_table: mlua::Table = inst.get("_config").unwrap_or_else(|_| lua.create_table().unwrap());
+        let label: String = config_table.get("label").unwrap_or_else(|_| "B".to_string());
+
+        let b = field::compute_point_field(
+            coil_inner_r,
+            coil_outer_r,
+            coil_width,
+            gap,
+            ampere_turns,
+            layers as usize,
+            [x, y, z],
+        );
+
+        let magnitude = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt();
+
+        info!(
+            "GaussMeter '{}' at ({:.1}, {:.1}, {:.1}): B = {:.4} mT",
+            label, x, y, z, magnitude * 1000.0
+        );
+
+        measurements.push(field::PointMeasurement {
+            position: [x, y, z],
+            value: b,
+            magnitude,
+            label,
+        });
+    }
+
+    measurements
+}
+
+/// Process Hydrophone instruments and compute pressure at their positions
+fn try_compute_hydrophone_measurements(lua: &mlua::Lua, content: &str) -> Vec<(f64, f64, f64, f64, String)> {
+    let mut measurements = Vec::new();
+
+    let has_acoustic = content.contains("acoustic(")
+        || content.contains("Acoustic")
+        || content.contains("Transducer")
+        || content.contains("Medium");
+
+    if !has_acoustic {
+        return measurements;
+    }
+
+    let globals = lua.globals();
+
+    // Get acoustic configuration
+    let acoustic_table: mlua::Table = match globals.get("Acoustic") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+    let frequency: f64 = acoustic_table.get("frequency").unwrap_or(1e6);
+    let drive_amplitude: f64 = acoustic_table.get("drive_current").unwrap_or(1.0);
+
+    let transducer: mlua::Table = match globals.get("Transducer") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+    let transducer_diameter: f64 = transducer.get("diameter").unwrap_or(12.0);
+    let transducer_z: f64 = transducer.get("height_from_coverslip").unwrap_or(5.0);
+
+    let medium_radius: f64 = if let Ok(polytube) = globals.get::<_, mlua::Table>("PolyTube") {
+        polytube.get::<_, f64>("inner_diameter").unwrap_or(26.0) / 2.0
+    } else {
+        13.0
+    };
+
+    let medium_height: f64 = if let Ok(medium) = globals.get::<_, mlua::Table>("Medium") {
+        medium.get::<_, f64>("liquid_height").unwrap_or(8.0)
+    } else {
+        8.0
+    };
+
+    let config = acoustic::AcousticConfig {
+        frequency,
+        transducer_radius: transducer_diameter / 2.0,
+        transducer_z,
+        medium_radius,
+        medium_height,
+        speed_of_sound: 1480.0 * 1000.0,
+        drive_amplitude,
+    };
+
+    // Find Hydrophone instruments
+    let instruments: mlua::Table = match globals.get("Instruments") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+
+    let active: mlua::Table = match instruments.get("_active") {
+        Ok(t) => t,
+        Err(_) => return measurements,
+    };
+
+    for pair in active.pairs::<i64, mlua::Table>() {
+        let (_, inst) = match pair {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let inst_type: String = match inst.get("_instrument_type") {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        if inst_type != "hydrophone" {
+            continue;
+        }
+
+        let position: mlua::Table = match inst.get("_position") {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let x: f64 = position.get(1).unwrap_or(0.0);
+        let y: f64 = position.get(2).unwrap_or(0.0);
+        let z: f64 = position.get(3).unwrap_or(0.0);
+
+        let config_table: mlua::Table = inst.get("_config").unwrap_or_else(|_| lua.create_table().unwrap());
+        let label: String = config_table.get("label").unwrap_or_else(|_| "P".to_string());
+
+        // Convert position to cylindrical (r, z) for acoustic computation
+        let r = (x * x + y * y).sqrt();
+        let (p_real, p_imag) = acoustic::compute_pressure_at_point(r, z, &config);
+        let magnitude = (p_real * p_real + p_imag * p_imag).sqrt();
+
+        info!(
+            "Hydrophone '{}' at ({:.1}, {:.1}, {:.1}): P = {:.4} (normalized)",
+            label, x, y, z, magnitude
+        );
+
+        measurements.push((x, y, z, magnitude, label));
+    }
+
+    measurements
+}
+
+/// Process NanoVNA frequency sweep if configured
+fn try_compute_nanovna_sweep(lua: &mlua::Lua, content: &str) -> Option<nanovna::FrequencySweep> {
+    if !content.contains("NanoVNA") && !content.contains("nanovna") {
+        return None;
+    }
+
+    let _result: mlua::Value = lua.load(content).eval().ok()?;
+    let globals = lua.globals();
+
+    let nanovna_table: mlua::Table = globals.get("NanoVNA").ok()?;
+
+    let f_start: f64 = nanovna_table.get("f_start").unwrap_or(1e6);
+    let f_stop: f64 = nanovna_table.get("f_stop").unwrap_or(50e6);
+    let num_points: usize = nanovna_table.get::<_, u32>("num_points").unwrap_or(101) as usize;
+
+    // Get coil configuration
+    let coil_radius: f64 = nanovna_table.get("coil_radius").unwrap_or(25.0);
+    let num_turns: u32 = nanovna_table.get("num_turns").unwrap_or(10);
+    let wire_diameter: f64 = nanovna_table.get("wire_diameter").unwrap_or(0.5);
+    let coil_resistance: f64 = nanovna_table.get("coil_resistance").unwrap_or(0.5);
+
+    let config = nanovna::NanoVNAConfig {
+        f_start,
+        f_stop,
+        num_points,
+        coil_radius,
+        num_turns,
+        wire_diameter,
+        coil_resistance,
+    };
+
+    info!(
+        "Computing NanoVNA sweep: {:.2} MHz - {:.2} MHz, {} points, R={:.1}mm, N={}",
+        f_start / 1e6, f_stop / 1e6, num_points, coil_radius, num_turns
+    );
+
+    let sweep = nanovna::compute_frequency_sweep(&config);
+
+    info!(
+        "NanoVNA min S11: {:.2} dB at {:.3} MHz",
+        sweep.min_s11_db, sweep.min_s11_freq / 1e6
+    );
+
+    Some(sweep)
 }
 
 fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<circuit::CircuitData> {

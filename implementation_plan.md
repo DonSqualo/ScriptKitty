@@ -1,133 +1,69 @@
-# Implementation List
+# Implementation Plan
 
-Current state of ScriptKitty (v0.0.3, 2026-01-21).
+ScriptKitty v0.0.4 - Prioritized implementation backlog (2026-01-21).
 
-## Completed Features
+## High Priority
+
+### Signal Generator → Amplifier → Coupling Coil Circuit
+Connect circuit diagram components to coupling coil geometry.
+- Circuit components exist: SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad (`server/src/circuit.rs`)
+- Need: Wire coupling coil impedance to MatchingNetwork calculation
+- Location: `stdlib/circuits.lua`, `server/src/circuit.rs`
+
+## Medium Priority
+
+### Draggable Windows for Multiphysics
+Add movable UI windows for field plane controls.
+- Basic window framework exists in renderer
+- Need: z-ordering
+
+### Circuit Simulation (Beyond Visualization)
+Current `circuit.rs` generates SVG diagrams only; no SPICE-like simulation.
+- Could add: AC analysis, impedance at frequency, power transfer calculation
+- Lower priority than NanoVNA which covers frequency sweep use case
+
+## Low Priority
+
+### Mesh Validation
+- Non-manifold geometry detection
+- Zero-volume solid warnings
+
+## Completed (Reference)
 
 ### Export
-- [x] **STL export** (`server/src/export.rs`) - Binary STL with computed normals
-- [x] **3MF export** (`server/src/export.rs`) - ZIP archive with colors
+- STL binary export (5 tests passing)
+- 3MF with per-vertex colors (5 tests passing)
 
-### Primitives
-- [x] **box** (`stdlib/primitives.lua`, `server/src/geometry.rs`) - Corner at origin
-- [x] **cylinder** (`stdlib/primitives.lua`, `server/src/geometry.rs`) - Base on XY, extends +Z
-- [x] **sphere** (`stdlib/primitives.lua`, `server/src/geometry.rs`) - Centered at origin
-- [x] **torus** (`stdlib/primitives.lua`) - Centered at origin, hole along Z
-
-### CSG
-- [x] **union** (`stdlib/csg.lua`, `server/src/geometry.rs`)
-- [x] **difference** (`stdlib/csg.lua`, `server/src/geometry.rs`)
-- [x] **intersect** (`stdlib/csg.lua`, `server/src/geometry.rs`)
+### Geometry
+- box, cylinder, sphere, torus, ring primitives
+- CSG: union, difference, intersect via manifold3d
+- group, assembly, component with instances
+- Transform chain: at, rotate, scale, centered
 
 ### Physics
-- [x] **Magnetostatic (Helmholtz)** (`server/src/field.rs`) - Biot-Savart for coil pairs with XZ/XY/YZ planes
-- [x] **Acoustic (Rayleigh-Sommerfeld)** (`server/src/acoustic.rs`) - Pressure field with coverslip reflection
-
-### Circuits
-- [x] **SignalGenerator** (`stdlib/circuits.lua`, `server/src/circuit.rs`) - RF source with frequency
-- [x] **Amplifier** (`stdlib/circuits.lua`, `server/src/circuit.rs`) - Power amplifier with gain
-- [x] **MatchingNetwork** (`stdlib/circuits.lua`, `server/src/circuit.rs`) - L-network from impedance
-- [x] **TransducerLoad** (`stdlib/circuits.lua`, `server/src/circuit.rs`) - Piezo load with ground
-- [x] **Circuit** (`stdlib/circuits.lua`, `server/src/circuit.rs`) - SVG schematic generation
+- Helmholtz magnetic field (Biot-Savart, 7 tests)
+- Acoustic pressure field (Rayleigh-Sommerfeld, 8 tests)
+- Standing wave reflection modeling (mirror source)
+- NanoVNA S11 frequency sweep (7 tests)
 
 ### Instruments
-- [x] **MagneticFieldPlane** (`stdlib/instruments/init.lua`) - XZ/XY/YZ colormap and 3D arrows
-- [x] **AcousticPressurePlane** (`stdlib/instruments/init.lua`) - Pressure field visualization
-- [x] **Hydrophone** (`stdlib/instruments/init.lua`) - Acoustic point probe
-- [x] **GaussMeter** (`stdlib/instruments/init.lua`) - Magnetic point probe
-- [x] **Probe** (`stdlib/instruments/init.lua`) - Line/volume probe definition
+- GaussMeter backend computation for point B-field measurement
+- Hydrophone backend computation for point pressure measurement
+- MagneticFieldPlane with XY/YZ/XZ plane support
+- AcousticPressurePlane with XY/YZ/XZ plane and colormap support
+
+### Materials
+- Comprehensive acoustic properties database
+- PZT ceramic, polycarbonate, PTFE, aluminum, neodymium
+- Speed of sound, impedance, attenuation coefficients
+
+### Visualization
+- XZ/XY/YZ colormap planes with jet/viridis/plasma colormaps
+- 3D arrow field for magnetic vectors
+- 1D line plot (canvas graph)
+- Circuit diagram SVG (18 tests)
 
 ### Renderer
-- [x] **Mesh rendering** - X-ray Fresnel shader
-- [x] **Flat shading** - dFdx/dFdy normals
-- [x] **Colormap plane** - XZ/XY/YZ planes with jet/viridis/plasma colormaps
-- [x] **Arrow field** - 3D vector visualization
-- [x] **1D graph** - Bz vs Z plot
-
-### Tests (36 total)
-- [x] **export.rs** - STL/3MF export, cross product, normalize
-- [x] **field.rs** - Biot-Savart, Helmholtz uniformity, colormap, binary format
-- [x] **acoustic.rs** - Rayleigh integral, impedance, reflection, field generation
-- [x] **circuit.rs** - Component drawing, SVG structure, L/C formulas, wire routing
-
-## Deleted (specs preserved)
-
-### Physics (no specs - API was empty)
-- electromagnetic()
-- electrostatic()
-- thermal() / thermal_transient()
-- structural()
-- multiphysics()
-
-### Instruments (no specs - API was empty)
-- Oscilloscope
-- Thermometer
-- ForceSensor
-- Streamlines
-- Isosurface
-- SParams
-- ElectricFieldPlane
-- TemperaturePlane
-
-### Materials (partial)
-- Removed: fr4, steel, water, pzt, petg, rubber, glass, polycarbonate
-- Kept: copper, air
-
-### Export (no specs - never implemented)
-- export_step
-- export_gltf
-- export_obj
-
-## Known Limitations
-
-### Helmholtz Field
-- Pattern-matches `config` global table with specific keys
-- Requires: coil_mean_radius, gap
-- Optionals: wire_diameter, windings, layers, packing_factor, current
-
-## File Structure
-
-```
-stdlib/
-├── init.lua          - Main entry, global exports
-├── primitives.lua    - box(), cylinder(), sphere(), torus()
-├── csg.lua           - union(), difference(), intersect()
-├── groups.lua        - group(), assembly(), component()
-├── transforms.lua    - translate(), rotate(), scale(), patterns
-├── materials.lua     - material() with copper, air database
-├── physics.lua       - magnetostatic(), acoustic(), current_source()
-├── circuits.lua      - SignalGenerator(), Amplifier(), MatchingNetwork(), TransducerLoad(), Circuit()
-├── instruments/
-│   └── init.lua      - Probe(), GaussMeter(), MagneticFieldPlane(), AcousticPressurePlane(), Hydrophone()
-├── view.lua          - view(), camera config
-└── export.lua        - export_stl(), export_3mf()
-
-server/src/
-├── main.rs           - Axum server, file watcher, Lua runner
-├── geometry.rs       - Manifold CSG, mesh generation
-├── export.rs         - STL/3MF writers
-├── field.rs          - Helmholtz Biot-Savart
-├── acoustic.rs       - Rayleigh-Sommerfeld pressure field
-└── circuit.rs        - SVG circuit diagram generation
-
-renderer/src/
-└── main.ts           - Three.js scene, WebSocket client
-
-specs/
-├── overview.md       - Architecture philosophy
-├── server/
-│   ├── architecture.md   - System diagram
-│   ├── implementation_status.md - API vs backend matrix
-│   └── garbage_collection.md - Post-project review
-├── stdlib/
-│   ├── primitives.md     - box(), cylinder() docs
-│   ├── csg.md            - Boolean ops docs
-│   ├── groups.md         - Hierarchy docs
-│   ├── export.md         - File output docs
-│   ├── view.md           - Camera/render docs
-│   ├── gotchas.md        - Known pitfalls
-│   ├── acoustic.md       - Deleted acoustic implementation
-│   └── circuits.md       - Deleted circuit implementation
-└── renderer/
-    └── colormap_plane.md - Field visualization docs
-```
+- Three.js mesh rendering
+- Flat shading with dFdx/dFdy normals
+- WebSocket binary protocol (VIEW, FIELD, CIRCUIT, MEASURE, NANOVNA headers)

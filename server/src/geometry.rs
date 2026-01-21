@@ -246,6 +246,43 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segme
 
             Ok(torus.transform(matrix))
         }
+        "ring" => {
+            // Ring (annulus with height) for coupling coils
+            // Created by revolving a rectangle around Z axis
+            let inner_radius: f64 = params.get("inner_radius")?;
+            let outer_radius: f64 = params.get("outer_radius")?;
+            let h: f64 = params.get("h")?;
+
+            // Create rectangle cross-section (in XY plane, will revolve around Y axis)
+            // Points define a rectangle from inner to outer radius, height h
+            let points = vec![
+                Point2 { x: inner_radius, y: 0.0 },
+                Point2 { x: outer_radius, y: 0.0 },
+                Point2 { x: outer_radius, y: h },
+                Point2 { x: inner_radius, y: h },
+            ];
+
+            let simple_polygon = SimplePolygon::new_from_points(points);
+            let polygons = Polygons::from_simple_polygons(vec![simple_polygon]);
+            let ring = polygons
+                .revolve(
+                    Some(PositiveI32::new(circular_segments as i32).unwrap()),
+                    Option::<manifold3d::types::NormalizedAngle>::None,
+                )
+                .map_err(|e| anyhow!("Ring creation failed: {:?}", e))?;
+
+            // Rotate to have Z as vertical axis (revolve creates around Y)
+            let rx = -std::f64::consts::FRAC_PI_2;
+            let (sx, cx) = (rx.sin(), rx.cos());
+            let matrix = Matrix4x3::new([
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, cx, -sx),
+                Vec3::new(0.0, sx, cx),
+                Vec3::new(0.0, 0.0, 0.0),
+            ]);
+
+            Ok(ring.transform(matrix))
+        }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }
 }

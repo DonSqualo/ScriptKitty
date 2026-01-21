@@ -79,7 +79,9 @@ fn rayleigh_piston(
     (p_real, p_imag)
 }
 
-fn compute_pressure_at_point(r: f64, z: f64, config: &AcousticConfig) -> (f64, f64) {
+/// Compute acoustic pressure at a specific point for Hydrophone measurements
+/// Returns (real, imag) complex pressure components
+pub fn compute_pressure_at_point(r: f64, z: f64, config: &AcousticConfig) -> (f64, f64) {
     let k = 2.0 * PI * config.frequency / config.speed_of_sound;
     let n_rings = 12;
     let n_segments = 24;
@@ -117,14 +119,21 @@ fn compute_pressure_at_point(r: f64, z: f64, config: &AcousticConfig) -> (f64, f
 
 // ===========================
 
-pub fn compute_acoustic_field(config: &AcousticConfig) -> FieldData {
+pub fn compute_acoustic_field(
+    config: &AcousticConfig,
+    plane: PlaneType,
+    plane_offset: f64,
+    colormap: Colormap,
+) -> FieldData {
     let slice_width = 80;
     let slice_height = 80;
 
-    let x_min = -config.medium_radius;
-    let x_max = config.medium_radius;
-    let z_min = 0.0;
-    let z_max = config.medium_height;
+    // Bounds depend on plane type
+    let (axis1_min, axis1_max, axis2_min, axis2_max) = match plane {
+        PlaneType::XZ => (-config.medium_radius, config.medium_radius, 0.0, config.medium_height),
+        PlaneType::XY => (-config.medium_radius, config.medium_radius, -config.medium_radius, config.medium_radius),
+        PlaneType::YZ => (-config.medium_radius, config.medium_radius, 0.0, config.medium_height),
+    };
 
     let mut slice_pressure_real = Vec::with_capacity(slice_width * slice_height);
     let mut slice_pressure_imag = Vec::with_capacity(slice_width * slice_height);
@@ -133,10 +142,20 @@ pub fn compute_acoustic_field(config: &AcousticConfig) -> FieldData {
     let mut max_magnitude: f64 = 0.0;
 
     for j in 0..slice_height {
-        let z = z_min + (j as f64 + 0.5) * (z_max - z_min) / slice_height as f64;
+        let axis2 = axis2_min + (j as f64 + 0.5) * (axis2_max - axis2_min) / slice_height as f64;
         for i in 0..slice_width {
-            let x = x_min + (i as f64 + 0.5) * (x_max - x_min) / slice_width as f64;
-            let r = x.abs();
+            let axis1 = axis1_min + (i as f64 + 0.5) * (axis1_max - axis1_min) / slice_width as f64;
+
+            // Map axes to cylindrical coordinates (r, z) based on plane type
+            let (r, z) = match plane {
+                PlaneType::XZ => (axis1.abs(), axis2), // x maps to r, axis2 is z
+                PlaneType::XY => {
+                    // XY plane at fixed z = plane_offset
+                    let rho = (axis1 * axis1 + axis2 * axis2).sqrt();
+                    (rho, plane_offset)
+                }
+                PlaneType::YZ => (axis1.abs(), axis2), // y maps to r, axis2 is z
+            };
 
             let (p_real, p_imag) = compute_pressure_at_point(r, z, config);
             let mag = (p_real * p_real + p_imag * p_imag).sqrt();
@@ -171,12 +190,12 @@ pub fn compute_acoustic_field(config: &AcousticConfig) -> FieldData {
         .collect();
 
     FieldData {
-        plane_type: PlaneType::XZ,
-        colormap: Colormap::Jet,
+        plane_type: plane,
+        colormap,
         slice_width,
         slice_height,
-        slice_bounds: [x_min, x_max, z_min, z_max],
-        slice_offset: 0.0,
+        slice_bounds: [axis1_min, axis1_max, axis2_min, axis2_max],
+        slice_offset: plane_offset,
         slice_bx,
         slice_bz,
         slice_magnitude,
@@ -295,7 +314,7 @@ mod tests {
     #[test]
     fn test_acoustic_field_generation() {
         let config = AcousticConfig::default();
-        let field = compute_acoustic_field(&config);
+        let field = compute_acoustic_field(&config, PlaneType::XZ, 0.0, Colormap::Jet);
 
         assert_eq!(field.slice_width, 80);
         assert_eq!(field.slice_height, 80);
@@ -307,5 +326,17 @@ mod tests {
             (max_mag - 1.0).abs() < 1e-5,
             "Magnitude should be normalized to 1.0"
         );
+    }
+
+    #[test]
+    fn test_acoustic_field_xy_plane() {
+        let config = AcousticConfig::default();
+        let field = compute_acoustic_field(&config, PlaneType::XY, 2.0, Colormap::Viridis);
+
+        assert_eq!(field.plane_type, PlaneType::XY);
+        assert_eq!(field.colormap, Colormap::Viridis);
+        assert_eq!(field.slice_offset, 2.0);
+        assert_eq!(field.slice_width, 80);
+        assert_eq!(field.slice_height, 80);
     }
 }

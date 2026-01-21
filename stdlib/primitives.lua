@@ -130,6 +130,25 @@ local function torus_sdf(major_radius, minor_radius)
   end
 end
 
+-- SDF for ring (annulus with height, base on XY plane at Z=0)
+local function ring_sdf(inner_radius, outer_radius, height)
+  return function(x, y, z)
+    local rho = math.sqrt(x*x + y*y)
+    local d_inner = inner_radius - rho
+    local d_outer = rho - outer_radius
+    local d_radial = math.max(d_inner, d_outer)
+    local d_bottom = -z
+    local d_top = z - height
+    local d_vertical = math.max(d_bottom, d_top)
+    local outside = math.sqrt(
+      math.max(d_radial, 0)^2 +
+      math.max(d_vertical, 0)^2
+    )
+    local inside = math.min(math.max(d_radial, d_vertical), 0)
+    return outside + inside
+  end
+end
+
 --- Create a box/cuboid (corner at origin)
 -- @param w Width (X dimension)
 -- @param d Depth (Y dimension), defaults to w
@@ -175,6 +194,19 @@ function Primitives.torus(major_radius, minor_radius)
   return Shape(torus_sdf(major_radius, minor_radius),
     {min = {-outer, -outer, -minor_radius}, max = {outer, outer, minor_radius}},
     {primitive = "torus", params = {major_radius = major_radius, minor_radius = minor_radius}}
+  )
+end
+
+--- Create a ring (annulus with height) with base on XY plane at Z=0
+-- Used for coupling coils in inductive coupling applications
+-- @param inner_radius Inner radius of the ring
+-- @param outer_radius Outer radius of the ring
+-- @param height Height of the ring along Z axis
+-- @return Shape object
+function Primitives.ring(inner_radius, outer_radius, height)
+  return Shape(ring_sdf(inner_radius, outer_radius, height),
+    {min = {-outer_radius, -outer_radius, 0}, max = {outer_radius, outer_radius, height}},
+    {primitive = "ring", params = {inner_radius = inner_radius, outer_radius = outer_radius, h = height}}
   )
 end
 
