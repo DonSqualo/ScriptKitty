@@ -82,11 +82,14 @@ View.load(state)
 
 ## Serialization
 
-**Only these values are serialized and sent to renderer:**
+**Values serialized and sent to renderer:**
 - `flat_shading`
 - `circular_segments`
+- `camera.position` (x, y, z)
+- `camera.target` (x, y, z)
+- `camera.fov`
 
-Other view state (camera, visibility, clipping) is NOT persisted via `View.serialize()`.
+Other view state (visibility, clipping) is NOT persisted via `View.serialize()`.
 
 ## Global Shortcut
 

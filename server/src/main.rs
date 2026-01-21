@@ -232,13 +232,22 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             let _ = tx.send(binary);
         }
 
-        // Compute Hydrophone point measurements
+        // Compute Hydrophone point measurements and send to renderer
         let hydrophone_measurements = try_compute_hydrophone_measurements(&lua, &content);
         for (x, y, z, magnitude, label) in &hydrophone_measurements {
             info!(
                 "Hydrophone measurement '{}': position=({:.1}, {:.1}, {:.1}), magnitude={:.6}",
                 label, x, y, z, magnitude
             );
+            // Convert to PointMeasurement and send to renderer
+            let measurement = field::PointMeasurement {
+                position: [*x, *y, *z],
+                value: [*magnitude, 0.0, 0.0], // Acoustic pressure is scalar, stored in first component
+                magnitude: *magnitude,
+                label: label.clone(),
+            };
+            let binary = measurement.to_binary();
+            let _ = tx.send(binary);
         }
 
         // Compute NanoVNA frequency sweep if configured
