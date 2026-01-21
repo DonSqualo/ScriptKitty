@@ -7,7 +7,7 @@ Build and development notes for Claude agents.
 ### Server (Rust)
 ```bash
 cd server
-cargo test        # Run tests (5 tests in export.rs)
+cargo test        # Run tests (44 tests across all modules)
 cargo build       # Debug build
 cargo build --release  # Release build
 ```
@@ -49,14 +49,21 @@ The server watches the Lua file for changes and pushes updates via WebSocket to 
 ## Key Patterns
 
 ### Helmholtz Field Computation
-The server pattern-matches for `helmholtz` or `coil_mean_radius` in Lua content to trigger Biot-Savart computation. Config is read from the `config` global table.
+The server pattern-matches for `helmholtz` or `coil_mean_radius` in Lua content to trigger Biot-Savart computation. Config is read from the `Coil` and `Wire` global tables (project convention).
 
 ### Binary Protocols
 - Mesh data: `[num_vertices:u32][num_indices:u32][positions][normals][colors][indices]`
 - Field data: Header `FIELD\0\0\0`, then slice dims, bounds, Bx, Bz, magnitude, arrows, line data
-- View config: Header `VIEW\0\0\0\0`, then `flat_shading:u8`
+- View config: Header `VIEW\0\0\0\0`, then `flat_shading:u8`, optional camera data
 - Circuit: Header `CIRCUIT\0`, then size, SVG data
+- Measurement: Header `MEASURE\0`, then position, value, magnitude, label (GaussMeter/Hydrophone)
+- Line probe: Header `LNPROBE\0`, then num_points, start, stop, positions, values, magnitudes, name
+- NanoVNA: Header `NANOVNA\0`, then num_points, min_s11_db, min_s11_freq, frequencies, magnitudes, phases
 
 ## Test Files
 
 - `server/src/export.rs` - 5 tests for STL/3MF export
+- `server/src/field.rs` - 7 tests for magnetic field computation
+- `server/src/acoustic.rs` - 8 tests for acoustic field computation
+- `server/src/nanovna.rs` - 7 tests for NanoVNA S11 simulation
+- `server/src/circuit.rs` - 18 tests for circuit SVG generation
