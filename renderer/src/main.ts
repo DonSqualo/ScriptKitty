@@ -193,6 +193,72 @@ function value_to_color(t: number): THREE.Color {
   );
 }
 
+// Viridis colormap (perceptually uniform, colorblind-friendly)
+// dark purple -> blue -> green -> yellow
+function value_to_color_viridis(t: number): THREE.Color {
+  t = Math.max(0, Math.min(1, t));
+
+  let r: number, g: number, b: number;
+
+  if (t < 0.25) {
+    const s = t / 0.25;
+    r = 0.267 + s * (0.282 - 0.267);
+    g = 0.004 + s * (0.140 - 0.004);
+    b = 0.329 + s * (0.458 - 0.329);
+  } else if (t < 0.5) {
+    const s = (t - 0.25) / 0.25;
+    r = 0.282 + s * (0.127 - 0.282);
+    g = 0.140 + s * (0.566 - 0.140);
+    b = 0.458 + s * (0.551 - 0.458);
+  } else if (t < 0.75) {
+    const s = (t - 0.5) / 0.25;
+    r = 0.127 + s * (0.741 - 0.127);
+    g = 0.566 + s * (0.873 - 0.566);
+    b = 0.551 + s * (0.150 - 0.551);
+  } else {
+    const s = (t - 0.75) / 0.25;
+    r = 0.741 + s * (0.993 - 0.741);
+    g = 0.873 + s * (0.906 - 0.873);
+    b = 0.150 + s * (0.144 - 0.150);
+  }
+
+  return new THREE.Color(r, g, b);
+}
+
+// Plasma colormap (perceptually uniform)
+// dark purple -> pink -> orange -> yellow
+function value_to_color_plasma(t: number): THREE.Color {
+  t = Math.max(0, Math.min(1, t));
+
+  let r: number, g: number, b: number;
+
+  if (t < 0.25) {
+    const s = t / 0.25;
+    r = 0.050 + s * (0.417 - 0.050);
+    g = 0.030 + s * (0.001 - 0.030);
+    b = 0.528 + s * (0.659 - 0.528);
+  } else if (t < 0.5) {
+    const s = (t - 0.25) / 0.25;
+    r = 0.417 + s * (0.798 - 0.417);
+    g = 0.001 + s * (0.279 - 0.001);
+    b = 0.659 + s * (0.470 - 0.659);
+  } else if (t < 0.75) {
+    const s = (t - 0.5) / 0.25;
+    r = 0.798 + s * (0.973 - 0.798);
+    g = 0.279 + s * (0.580 - 0.279);
+    b = 0.470 + s * (0.254 - 0.470);
+  } else {
+    const s = (t - 0.75) / 0.25;
+    r = 0.973 + s * (0.940 - 0.973);
+    g = 0.580 + s * (0.975 - 0.580);
+    b = 0.254 + s * (0.131 - 0.254);
+  }
+
+  return new THREE.Color(r, g, b);
+}
+
+type ColormapFn = (t: number) => THREE.Color;
+
 // Parse binary mesh
 function parse_binary_mesh(buffer: ArrayBuffer): THREE.BufferGeometry | null {
   const view = new DataView(buffer);
@@ -231,6 +297,11 @@ function parse_binary_mesh(buffer: ArrayBuffer): THREE.BufferGeometry | null {
   return geometry;
 }
 
+// Plane type constants matching server
+const PLANE_XZ = 0;
+const PLANE_XY = 1;
+const PLANE_YZ = 2;
+
 // Parse binary field data
 function parse_field_data(buffer: ArrayBuffer) {
   const view = new DataView(buffer);
@@ -240,11 +311,15 @@ function parse_field_data(buffer: ArrayBuffer) {
   const sliceWidth = view.getUint32(offset, true); offset += 4;
   const sliceHeight = view.getUint32(offset, true); offset += 4;
 
-  // 2D slice bounds [x_min, x_max, z_min, z_max]
-  const xMin = view.getFloat32(offset, true); offset += 4;
-  const xMax = view.getFloat32(offset, true); offset += 4;
-  const zMin = view.getFloat32(offset, true); offset += 4;
-  const zMax = view.getFloat32(offset, true); offset += 4;
+  // 2D slice bounds [axis1_min, axis1_max, axis2_min, axis2_max]
+  const axis1Min = view.getFloat32(offset, true); offset += 4;
+  const axis1Max = view.getFloat32(offset, true); offset += 4;
+  const axis2Min = view.getFloat32(offset, true); offset += 4;
+  const axis2Max = view.getFloat32(offset, true); offset += 4;
+
+  // Plane type (u8) and offset (f32)
+  const planeType = view.getUint8(offset); offset += 1;
+  const planeOffset = view.getFloat32(offset, true); offset += 4;
 
   const sliceSize = sliceWidth * sliceHeight;
 
@@ -277,7 +352,9 @@ function parse_field_data(buffer: ArrayBuffer) {
     slice: {
       width: sliceWidth,
       height: sliceHeight,
-      bounds: [xMin, xMax, zMin, zMax],
+      bounds: [axis1Min, axis1Max, axis2Min, axis2Max],
+      plane_type: planeType,
+      plane_offset: planeOffset,
       bx: sliceBx,
       bz: sliceBz,
       magnitude: sliceMagnitude,
@@ -341,10 +418,10 @@ function create_arrow_field(arrows: { positions: Float32Array, vectors: Float32A
   return group;
 }
 
-// Create 2D field plane visualization (XZ plane)
-function create_field_plane(slice: { width: number, height: number, bounds: number[], magnitude: Float32Array }) {
-  const { width, height, bounds, magnitude } = slice;
-  const [xMin, xMax, zMin, zMax] = bounds;
+// Create 2D field plane visualization
+function create_field_plane(slice: { width: number, height: number, bounds: number[], plane_type: number, plane_offset: number, magnitude: Float32Array }, colormap: ColormapFn = value_to_color): THREE.Mesh {
+  const { width, height, bounds, plane_type, plane_offset, magnitude } = slice;
+  const [axis1Min, axis1Max, axis2Min, axis2Max] = bounds;
 
   // Create texture from magnitude data
   const textureData = new Uint8Array(width * height * 4);
@@ -366,7 +443,7 @@ function create_field_plane(slice: { width: number, height: number, bounds: numb
       textureData[flippedIdx * 4 + 3] = 0;
     } else {
       const t = mag / maxMag;
-      const color = value_to_color(t);
+      const color = colormap(t);
       textureData[flippedIdx * 4] = Math.floor(color.r * 255);
       textureData[flippedIdx * 4 + 1] = Math.floor(color.g * 255);
       textureData[flippedIdx * 4 + 2] = Math.floor(color.b * 255);
@@ -377,10 +454,10 @@ function create_field_plane(slice: { width: number, height: number, bounds: numb
   const texture = new THREE.DataTexture(textureData, width, height, THREE.RGBAFormat);
   texture.needsUpdate = true;
 
-  const planeWidth = xMax - xMin;
-  const planeHeight = zMax - zMin;
+  const plane_width = axis1Max - axis1Min;
+  const plane_height = axis2Max - axis2Min;
 
-  const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+  const geometry = new THREE.PlaneGeometry(plane_width, plane_height);
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
@@ -389,8 +466,24 @@ function create_field_plane(slice: { width: number, height: number, bounds: numb
   });
 
   const plane = new THREE.Mesh(geometry, material);
-  plane.position.set((xMin + xMax) / 2, 0, (zMin + zMax) / 2);
-  plane.rotation.x = -Math.PI / 2; // Lay flat in XZ plane
+
+  // Position and orient plane based on plane type
+  // PlaneGeometry creates a plane in XY by default (facing +Z)
+  const axis1_center = (axis1Min + axis1Max) / 2;
+  const axis2_center = (axis2Min + axis2Max) / 2;
+
+  if (plane_type === PLANE_XZ) {
+    // XZ plane at Y=offset: rotate -90 around X
+    plane.position.set(axis1_center, plane_offset, axis2_center);
+    plane.rotation.x = -Math.PI / 2;
+  } else if (plane_type === PLANE_XY) {
+    // XY plane at Z=offset: no rotation needed
+    plane.position.set(axis1_center, axis2_center, plane_offset);
+  } else if (plane_type === PLANE_YZ) {
+    // YZ plane at X=offset: rotate 90 around Y
+    plane.position.set(plane_offset, axis1_center, axis2_center);
+    plane.rotation.y = Math.PI / 2;
+  }
 
   return plane;
 }

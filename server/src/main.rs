@@ -21,6 +21,8 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
+mod acoustic;
+mod circuit;
 mod export;
 mod field;
 mod geometry;
@@ -29,6 +31,7 @@ struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
     current_mesh: RwLock<Option<Vec<u8>>>,
     current_field: RwLock<Option<Vec<u8>>>,
+    current_circuit: RwLock<Option<Vec<u8>>>,
 }
 
 #[tokio::main]
@@ -53,16 +56,20 @@ async fn main() -> Result<()> {
         mesh_tx: mesh_tx.clone(),
         current_mesh: RwLock::new(None),
         current_field: RwLock::new(None),
+        current_circuit: RwLock::new(None),
     });
 
-    // Handle mesh/field results
+    // Handle mesh/field/circuit results
     let state_clone = state.clone();
     tokio::spawn(async move {
         while let Some(data) = result_rx.recv().await {
             let is_field = data.len() >= 5 && &data[0..5] == b"FIELD";
+            let is_circuit = data.len() >= 8 && &data[0..8] == b"CIRCUIT\0";
 
             if is_field {
                 *state_clone.current_field.write().await = Some(data.clone());
+            } else if is_circuit {
+                *state_clone.current_circuit.write().await = Some(data.clone());
             } else {
                 *state_clone.current_mesh.write().await = Some(data.clone());
             }
@@ -157,6 +164,30 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             );
             let _ = tx.send(field_binary);
         }
+
+        // Try to compute acoustic field if this looks like an acoustic simulation
+        if let Some(field_data) = try_compute_acoustic_field(&lua, &content) {
+            let field_binary = field_data.to_binary();
+            info!(
+                "Generated acoustic field: {}x{} slice, {} bytes",
+                field_data.slice_width,
+                field_data.slice_height,
+                field_binary.len()
+            );
+            let _ = tx.send(field_binary);
+        }
+
+        // Try to generate circuit diagram if this looks like a circuit definition
+        if let Some(circuit_data) = try_generate_circuit(&lua, &content) {
+            let circuit_binary = circuit_data.to_binary();
+            info!(
+                "Generated circuit: {}x{}, {} bytes SVG",
+                circuit_data.width,
+                circuit_data.height,
+                circuit_data.svg.len()
+            );
+            let _ = tx.send(circuit_binary);
+        }
     }
 }
 
@@ -207,7 +238,127 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
         gap,
         ampere_turns,
         layers as usize,
+        field::PlaneType::XZ,
+        0.0,
     ))
+}
+
+fn try_compute_acoustic_field(lua: &mlua::Lua, content: &str) -> Option<field::FieldData> {
+    // Check if this file defines acoustic simulation configuration
+    let has_acoustic = content.contains("acoustic(")
+        || content.contains("Acoustic")
+        || content.contains("Transducer")
+        || content.contains("Medium");
+
+    if !has_acoustic {
+        return None;
+    }
+
+    // Execute the Lua to get config values
+    let _result: mlua::Value = lua.load(content).eval().ok()?;
+    let globals = lua.globals();
+
+    // Try to get Acoustic config
+    let acoustic: mlua::Table = globals.get("Acoustic").ok()?;
+    let frequency: f64 = acoustic.get("frequency").unwrap_or(1e6);
+    let drive_amplitude: f64 = acoustic.get("drive_current").unwrap_or(1.0);
+
+    // Try to get Transducer config
+    let transducer: mlua::Table = globals.get("Transducer").ok()?;
+    let transducer_diameter: f64 = transducer.get("diameter").unwrap_or(12.0);
+    let transducer_z: f64 = transducer.get("height_from_coverslip").unwrap_or(5.0);
+
+    // Try to get PolyTube config for medium radius
+    let medium_radius: f64 = if let Ok(polytube) = globals.get::<_, mlua::Table>("PolyTube") {
+        polytube.get::<_, f64>("inner_diameter").unwrap_or(26.0) / 2.0
+    } else {
+        13.0
+    };
+
+    // Try to get Medium config for liquid height
+    let medium_height: f64 = if let Ok(medium) = globals.get::<_, mlua::Table>("Medium") {
+        medium.get::<_, f64>("liquid_height").unwrap_or(8.0)
+    } else {
+        8.0
+    };
+
+    let config = acoustic::AcousticConfig {
+        frequency,
+        transducer_radius: transducer_diameter / 2.0,
+        transducer_z,
+        medium_radius,
+        medium_height,
+        speed_of_sound: 1480.0 * 1000.0,
+        drive_amplitude,
+    };
+
+    info!(
+        "Computing acoustic field: f={:.0}Hz, R={:.1}mm, z={:.1}mm",
+        config.frequency, config.transducer_radius, config.transducer_z
+    );
+
+    Some(acoustic::compute_acoustic_field(&config))
+}
+
+fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<circuit::CircuitData> {
+    if !content.contains("Circuit") {
+        return None;
+    }
+
+    let _: mlua::Value = lua.load(content).eval().ok()?;
+    let globals = lua.globals();
+
+    let circuit_table: mlua::Table = globals.get("_circuit_data").ok()?;
+    let components_table: mlua::Table = circuit_table.get("components").ok()?;
+    let size_table: mlua::Table = circuit_table.get("size").ok()?;
+
+    let width: f64 = size_table.get(1).unwrap_or(400.0);
+    let height: f64 = size_table.get(2).unwrap_or(90.0);
+
+    let mut components = Vec::new();
+
+    for pair in components_table.pairs::<i64, mlua::Table>() {
+        let (_, comp_table) = pair.ok()?;
+        let comp_type: String = comp_table.get("component").ok()?;
+        let config: mlua::Table = comp_table.get("config").ok()?;
+
+        let component = match comp_type.as_str() {
+            "signal_generator" => {
+                let frequency: f64 = config.get("frequency").unwrap_or(1e6);
+                let amplitude: f64 = config.get("amplitude").unwrap_or(1.0);
+                circuit::CircuitComponent::SignalGenerator { frequency, amplitude }
+            }
+            "amplifier" => {
+                let gain: f64 = config.get("gain").unwrap_or(10.0);
+                circuit::CircuitComponent::Amplifier { gain }
+            }
+            "matching_network" => {
+                let impedance_real: f64 = config.get("impedance_real").unwrap_or(50.0);
+                let impedance_imag: f64 = config.get("impedance_imag").unwrap_or(0.0);
+                let frequency: f64 = config.get("frequency").unwrap_or(1e6);
+                circuit::CircuitComponent::MatchingNetwork { impedance_real, impedance_imag, frequency }
+            }
+            "transducer_load" => {
+                let impedance_real: f64 = config.get("impedance_real").unwrap_or(50.0);
+                let impedance_imag: f64 = config.get("impedance_imag").unwrap_or(0.0);
+                circuit::CircuitComponent::TransducerLoad { impedance_real, impedance_imag }
+            }
+            _ => continue,
+        };
+
+        components.push(component);
+    }
+
+    if components.is_empty() {
+        return None;
+    }
+
+    info!(
+        "Generating circuit diagram: {} components, {}x{}",
+        components.len(), width, height
+    );
+
+    Some(circuit::generate_circuit_svg(&components, width, height))
 }
 
 struct ProcessResult {
@@ -293,6 +444,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     // Send current field if available
     if let Some(field) = state.current_field.read().await.clone() {
         let _ = sender.send(Message::Binary(field.into())).await;
+    }
+
+    // Send current circuit if available
+    if let Some(circuit) = state.current_circuit.read().await.clone() {
+        let _ = sender.send(Message::Binary(circuit.into())).await;
     }
 
     loop {

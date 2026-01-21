@@ -4,6 +4,13 @@
 
 use std::f64::consts::PI;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlaneType {
+    XZ = 0,  // Plane at Y=offset
+    XY = 1,  // Plane at Z=offset
+    YZ = 2,  // Plane at X=offset
+}
+
 const MU0: f64 = 4.0 * PI * 1e-7; // Permeability of free space (H/m)
 
 /// A circular current loop
@@ -11,18 +18,21 @@ const MU0: f64 = 4.0 * PI * 1e-7; // Permeability of free space (H/m)
 pub struct CurrentLoop {
     pub center: [f64; 3],    // Center position (mm)
     pub radius: f64,         // Radius (mm)
-    pub normal: [f64; 3],    // Normal direction (unit vector)
+    #[allow(dead_code)]
+    pub normal: [f64; 3],    // Normal direction (unit vector) - for future non-Z-aligned coils
     pub ampere_turns: f64,   // Current × turns (A·turns)
 }
 
 /// Magnetic field data for visualization
 pub struct FieldData {
-    // 2D slice data (XZ plane at y=0)
+    // 2D slice data
+    pub plane_type: PlaneType,
     pub slice_width: usize,
     pub slice_height: usize,
-    pub slice_bounds: [f64; 4],  // [x_min, x_max, z_min, z_max] in mm
-    pub slice_bx: Vec<f32>,      // Bx component (T)
-    pub slice_bz: Vec<f32>,      // Bz component (T)
+    pub slice_bounds: [f64; 4],  // Bounds in mm: [axis1_min, axis1_max, axis2_min, axis2_max]
+    pub slice_offset: f64,       // Offset along normal axis (mm)
+    pub slice_bx: Vec<f32>,      // B component along first axis (T)
+    pub slice_bz: Vec<f32>,      // B component along second axis (T)
     pub slice_magnitude: Vec<f32>, // |B| (T)
 
     // 3D arrow field
@@ -50,6 +60,10 @@ impl FieldData {
         for &b in &self.slice_bounds {
             data.extend_from_slice(&(b as f32).to_le_bytes());
         }
+
+        // Plane type (u8) and offset (f32)
+        data.push(self.plane_type as u8);
+        data.extend_from_slice(&(self.slice_offset as f32).to_le_bytes());
 
         // 2D slice data
         for &v in &self.slice_bx {
@@ -167,13 +181,15 @@ fn compute_field(loops: &[CurrentLoop], point: [f64; 3]) -> [f64; 3] {
 
 /// Generate field visualization data for Helmholtz coil configuration
 pub fn compute_helmholtz_field(
-    coil_radius: f64,      // Mean radius (mm)
+    _coil_radius: f64,     // Mean radius (mm) - unused, kept for API compatibility
     coil_inner_r: f64,     // Inner radius (mm)
     coil_outer_r: f64,     // Outer radius (mm)
     coil_width: f64,       // Axial width (mm)
     gap: f64,              // Gap between coils (mm)
     ampere_turns: f64,     // A·turns per coil
     num_layers: usize,     // Radial layers to model
+    plane: PlaneType,      // Plane orientation for 2D slice
+    plane_offset: f64,     // Offset along plane normal (mm)
 ) -> FieldData {
     // Create current loops to model the coils
     // Distribute loops across the cross-section
@@ -203,34 +219,51 @@ pub fn compute_helmholtz_field(
         });
     }
 
-    // Compute 2D slice (XZ plane)
+    // Compute 2D slice
     let slice_width = 80;
     let slice_height = 80;
     let extent = coil_outer_r * 2.5;
     let z_extent = (coil_z + coil_width) * 1.5;
 
-    let x_min = -extent;
-    let x_max = extent;
-    let z_min = -z_extent;
-    let z_max = z_extent;
+    // Bounds depend on plane type
+    let (axis1_min, axis1_max, axis2_min, axis2_max) = match plane {
+        PlaneType::XZ => (-extent, extent, -z_extent, z_extent),
+        PlaneType::XY => (-extent, extent, -extent, extent),
+        PlaneType::YZ => (-extent, extent, -z_extent, z_extent),
+    };
 
     let mut slice_bx = Vec::with_capacity(slice_width * slice_height);
     let mut slice_bz = Vec::with_capacity(slice_width * slice_height);
     let mut slice_magnitude = Vec::with_capacity(slice_width * slice_height);
 
     for j in 0..slice_height {
-        let z = z_min + (j as f64 + 0.5) * (z_max - z_min) / slice_height as f64;
+        let axis2 = axis2_min + (j as f64 + 0.5) * (axis2_max - axis2_min) / slice_height as f64;
         for i in 0..slice_width {
-            let x = x_min + (i as f64 + 0.5) * (x_max - x_min) / slice_width as f64;
+            let axis1 = axis1_min + (i as f64 + 0.5) * (axis1_max - axis1_min) / slice_width as f64;
 
-            let b = compute_field(&loops, [x, 0.0, z]);
+            // Map axes to 3D point based on plane type
+            let point = match plane {
+                PlaneType::XZ => [axis1, plane_offset, axis2],  // x, y=offset, z
+                PlaneType::XY => [axis1, axis2, plane_offset],  // x, y, z=offset
+                PlaneType::YZ => [plane_offset, axis1, axis2],  // x=offset, y, z
+            };
+
+            let b = compute_field(&loops, point);
             let mag = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt();
 
-            slice_bx.push(b[0] as f32);
-            slice_bz.push(b[2] as f32);
+            // Store in-plane components based on plane type
+            let (b1, b2) = match plane {
+                PlaneType::XZ => (b[0], b[2]),  // Bx, Bz
+                PlaneType::XY => (b[0], b[1]),  // Bx, By
+                PlaneType::YZ => (b[1], b[2]),  // By, Bz
+            };
+
+            slice_bx.push(b1 as f32);
+            slice_bz.push(b2 as f32);
             slice_magnitude.push(mag as f32);
         }
     }
+    let slice_bounds = [axis1_min, axis1_max, axis2_min, axis2_max];
 
     // Compute 3D arrow field
     let arrow_grid = 10;
@@ -282,7 +315,7 @@ pub fn compute_helmholtz_field(
     let mut line_bz = Vec::with_capacity(line_points);
 
     for i in 0..line_points {
-        let z = z_min + i as f64 * (z_max - z_min) / (line_points - 1) as f64;
+        let z = -z_extent + i as f64 * (2.0 * z_extent) / (line_points - 1) as f64;
         let b = compute_field(&loops, [0.0, 0.0, z]);
 
         line_z.push(z as f32);
@@ -290,9 +323,11 @@ pub fn compute_helmholtz_field(
     }
 
     FieldData {
+        plane_type: plane,
         slice_width,
         slice_height,
-        slice_bounds: [x_min, x_max, z_min, z_max],
+        slice_bounds,
+        slice_offset: plane_offset,
         slice_bx,
         slice_bz,
         slice_magnitude,

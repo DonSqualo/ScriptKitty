@@ -15,6 +15,10 @@ Current state of ScriptKitty after cleanup (2026-01-21).
 
 ### Physics
 - [x] **Magnetostatic (Helmholtz)** (`server/src/field.rs`) - Biot-Savart for coil pairs
+- [x] **Acoustic (Rayleigh-Sommerfeld)** (`server/src/acoustic.rs`) - Pressure field with reflection
+
+### Circuits
+- [x] **SVG circuit diagram** (`server/src/circuit.rs`) - SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad
 
 ### Instruments
 - [x] **MagneticFieldPlane** - XZ colormap and 3D arrows
@@ -24,21 +28,11 @@ Current state of ScriptKitty after cleanup (2026-01-21).
 ### Renderer
 - [x] **Mesh rendering** - X-ray Fresnel shader
 - [x] **Flat shading** - dFdx/dFdy normals
-- [x] **Colormap plane** - XZ plane, jet colormap
+- [x] **Colormap plane** - XZ/XY/YZ planes with jet/viridis/plasma colormaps
 - [x] **Arrow field** - 3D vector visualization
 - [x] **1D graph** - Bz vs Z plot
 
 ## Deleted (specs preserved)
-
-### Acoustic (`specs/stdlib/acoustic.md`)
-- Rayleigh-Sommerfeld pressure field computation
-- AcousticPressurePlane, AcousticEnergyPlane, AcousticIntensityPlane
-- Hydrophone probe
-
-### Circuits (`specs/stdlib/circuits.md`)
-- SVG circuit diagram generation
-- SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad
-- L-match calculation
 
 ### Physics (no specs - API was empty)
 - electromagnetic()
@@ -68,10 +62,6 @@ Current state of ScriptKitty after cleanup (2026-01-21).
 
 ## Known Limitations
 
-### Renderer
-- Only XZ plane supported (XY/YZ ignored)
-- Only jet colormap (viridis/plasma ignored)
-
 ### Helmholtz Field
 - Pattern-matches `config` global table with specific keys
 - Requires: coil_mean_radius, gap
@@ -97,7 +87,9 @@ server/src/
 ├── main.rs           - Axum server, file watcher, Lua runner
 ├── geometry.rs       - Manifold CSG, mesh generation
 ├── export.rs         - STL/3MF writers
-└── field.rs          - Helmholtz Biot-Savart
+├── field.rs          - Helmholtz Biot-Savart
+├── acoustic.rs       - Rayleigh-Sommerfeld pressure field
+└── circuit.rs        - SVG circuit diagram generation
 
 renderer/src/
 └── main.ts           - Three.js scene, WebSocket client
