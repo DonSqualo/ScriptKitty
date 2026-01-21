@@ -219,10 +219,6 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segme
                 None::<manifold3d::types::PositiveI32>,
             ))
         }
-        "cube" => {
-            let size: f64 = params.get("size").unwrap_or(1.0);
-            Ok(Manifold::new_cuboid(pos(size), pos(size), pos(size), false))
-        }
         "torus" => {
             let major_radius: f64 = params.get("major_radius")?;
             let minor_radius: f64 = params.get("minor_radius")?;

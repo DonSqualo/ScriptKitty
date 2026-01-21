@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.5 - Prioritized implementation backlog (2026-01-21).
+ScriptKitty v0.0.8 - Prioritized implementation backlog (2026-01-21).
 
 ## Medium Priority
 
@@ -25,9 +25,10 @@ Lua stdlib has assembly(), component(), and instance() but backend doesn't disti
 - Files: `server/src/geometry.rs`
 
 ### View State Serialization
-Camera, visibility, and clipping NOT sent to renderer (per `specs/stdlib/view.md:86-89`).
-- Only `flat_shading` and `circular_segments` are serialized
-- If needed: extend VIEW WebSocket message to include camera position/target
+Visibility and clipping NOT sent to renderer.
+- Serialized: `flat_shading`, `circular_segments`, camera position/target/fov
+- NOT serialized: visibility list, clipping planes
+- If needed: extend VIEW WebSocket message to include visibility/clipping
 
 ## Recently Fixed
 
