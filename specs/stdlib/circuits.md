@@ -1,6 +1,6 @@
 # Circuit Diagrams
 
-Specs for 2D circuit schematic overlays. SVG generation was in `circuit.rs`, deleted to reduce scope.
+Specs for 2D circuit schematic overlays. SVG generation implemented in `server/src/circuit.rs`.
 
 ## Purpose
 
@@ -109,18 +109,17 @@ fn format_value(value: f64, unit: &str) -> String {
 
 Backend triggers when `Circuit` appears in Lua content and result contains `circuit.type == "circuit"`.
 
-## Future Implementation Notes
+## Implementation Details
 
-For regenerating circuit diagrams:
-1. Keep Lua API in `stdlib/circuits.lua`
-2. Implement SVG generation in `circuit.rs`
-3. Key functions needed:
-   - `draw_signal_generator(x, y)` - circle with sine
-   - `draw_amplifier(x, y)` - triangle
-   - `draw_matching_network(x, y, gnd_y, L, C)` - L-match with labels
-   - `draw_transducer(x, y, gnd_y)` - piezo rectangle
-4. Wire routing: horizontal lines between component ports
-5. Ground rail: single horizontal line at bottom
+Circuit diagrams are fully implemented in `server/src/circuit.rs`:
+- `draw_signal_generator(x, y)` - circle with sine wave
+- `draw_amplifier(x, y)` - triangle
+- `draw_matching_network(x, y, gnd_y, L, C)` - L-match with component labels
+- `draw_transducer(x, y, gnd_y)` - piezo rectangle
+- Wire routing: horizontal lines between component ports
+- Ground rail: single horizontal line at bottom
+
+18 unit tests validate all component rendering and formulas.
 
 ## Serialization
 

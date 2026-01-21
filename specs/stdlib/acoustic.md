@@ -1,6 +1,6 @@
 # Acoustic Field Simulation
 
-Specs for ultrasound pressure field visualization. Backend was in `acoustic.rs`, deleted to reduce scope.
+Specs for ultrasound pressure field visualization. Backend implemented in `server/src/acoustic.rs`.
 
 ## Physics Model
 
@@ -60,17 +60,15 @@ Renderer (`main.ts`) displays field plane:
 - Jet colormap
 - Transparent pixels where magnitude < 1e-6
 
-## Lua API (deleted)
+## Lua API
 
-Was:
 ```lua
 AcousticPressurePlane(plane, offset, config)
-AcousticEnergyPlane(plane, offset, config)
-AcousticIntensityPlane(plane, offset, config)
 Hydrophone(position, config)
 ```
 
-Only `AcousticPressurePlane` had backend support. Others were API-only.
+`AcousticPressurePlane` has full backend support for XZ plane visualization.
+`Hydrophone` is defined in instruments for point measurements.
 
 ## Rayleigh Integral Implementation
 

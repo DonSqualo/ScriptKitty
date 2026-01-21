@@ -1,6 +1,6 @@
 # Implementation List
 
-Current state of ScriptKitty (v0.0.2, 2026-01-21).
+Current state of ScriptKitty (v0.0.3, 2026-01-21).
 
 ## Completed Features
 
