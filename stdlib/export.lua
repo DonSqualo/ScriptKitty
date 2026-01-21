@@ -17,7 +17,7 @@ function Export.export_3mf(filename, object, config)
     format = "3mf",
     filename = filename,
     object = object,
-    units = config.units or "mm",
+    units = config.units or "millimeter",
     include_colors = config.color ~= false,
   })
 end

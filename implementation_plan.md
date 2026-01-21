@@ -9,6 +9,14 @@ Current `circuit.rs` generates SVG diagrams only; no SPICE-like simulation.
 - Could add: AC analysis, impedance at frequency, power transfer calculation
 - Lower priority - NanoVNA covers frequency sweep use case
 
+### Component/Instance Backend Support
+Lua stdlib has assembly(), component(), and instance() but backend doesn't distinguish these types.
+- assembly and component serialize as type="group" (not their actual types)
+- Backend has no code path for type="instance"
+- Instance expansion and component reuse optimization not implemented
+- Files: `stdlib/groups.lua`, `server/src/geometry.rs`
+- Impact: Instancing feature non-functional, all instances get full geometry copies
+
 ## Low Priority
 
 ### Mesh Validation

@@ -31,7 +31,7 @@ Modern 3D printing format with color support.
 
 | Config key | Type | Default | Description |
 |------------|------|---------|-------------|
-| units | string | "mm" | Unit system |
+| units | string | "millimeter" | Unit system (3MF standard units) |
 | color | boolean | true | Include colors |
 
 ## Global Shortcuts
@@ -47,7 +47,7 @@ Modern 3D printing format with color support.
   filename = "part.stl",
   object = <serialized>,
   circular_segments = 128,  -- stl only
-  units = "mm",             -- 3mf only
+  units = "millimeter",     -- 3mf only (3MF standard: millimeter, centimeter, meter, inch, foot, micron)
   include_colors = true,    -- 3mf only
 }
 ```
