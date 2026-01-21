@@ -2,8 +2,8 @@
 //! Uses manifold3d for guaranteed watertight manifold meshes
 
 use anyhow::{anyhow, Result};
-use manifold3d::types::{Matrix4x3, Point2, PositiveF64, PositiveI32, Vec3};
-use manifold3d::{Manifold, MeshGL, Polygons, SimplePolygon};
+use manifold3d::types::{Matrix4x3, PositiveF64, PositiveI32, Vec3};
+use manifold3d::{Manifold, MeshGL};
 use mlua::{Lua, Value};
 use std::alloc::{alloc, Layout};
 use std::os::raw::c_void;
@@ -51,9 +51,19 @@ impl MeshData {
     }
 }
 
-// FFI to access tri_verts which isn't exposed in the high-level Rust API
 extern "C" {
     fn manifold_meshgl_tri_verts(mem: *mut c_void, m: *mut std::ffi::c_void) -> *mut u32;
+    fn manifold_alloc_meshgl() -> *mut c_void;
+    fn manifold_meshgl(
+        mem: *mut c_void,
+        vert_props: *const f32,
+        n_verts: usize,
+        n_props: usize,
+        tri_verts: *const u32,
+        n_tris: usize,
+    ) -> *mut c_void;
+    fn manifold_of_meshgl(mem: *mut c_void, mesh: *mut c_void) -> *mut c_void;
+    fn manifold_alloc_manifold() -> *mut c_void;
 }
 
 fn get_mesh_indices(mesh: &MeshGL, count: usize) -> Vec<u32> {
@@ -216,72 +226,84 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segme
         "torus" => {
             let major_radius: f64 = params.get("major_radius")?;
             let minor_radius: f64 = params.get("minor_radius")?;
+            let u_segments = circular_segments as usize;
+            let v_segments = circular_segments as usize;
+            let pi2 = 2.0 * std::f64::consts::PI;
 
-            let segments = circular_segments as usize;
-            let mut points: Vec<Point2> = Vec::with_capacity(segments);
-            for i in 0..segments {
-                let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-                let x = major_radius + minor_radius * angle.cos();
-                let y = minor_radius * angle.sin();
-                points.push(Point2 { x, y });
+            let num_verts = u_segments * v_segments;
+            let mut vert_props: Vec<f32> = Vec::with_capacity(num_verts * 6);
+
+            for i in 0..u_segments {
+                let u = pi2 * (i as f64) / (u_segments as f64);
+                let cos_u = u.cos();
+                let sin_u = u.sin();
+                for j in 0..v_segments {
+                    let v = pi2 * (j as f64) / (v_segments as f64);
+                    let cos_v = v.cos();
+                    let sin_v = v.sin();
+                    let x = (major_radius + minor_radius * cos_v) * cos_u;
+                    let y = (major_radius + minor_radius * cos_v) * sin_u;
+                    let z = minor_radius * sin_v;
+                    let nx = cos_v * cos_u;
+                    let ny = cos_v * sin_u;
+                    let nz = sin_v;
+                    vert_props.extend_from_slice(&[x as f32, y as f32, z as f32, nx as f32, ny as f32, nz as f32]);
+                }
             }
 
-            let simple_polygon = SimplePolygon::new_from_points(points);
-            let polygons = Polygons::from_simple_polygons(vec![simple_polygon]);
-            let torus = polygons
-                .revolve(
-                    Some(PositiveI32::new(circular_segments as i32).unwrap()),
-                    Option::<manifold3d::types::NormalizedAngle>::None,
-                )
-                .map_err(|e| anyhow!("Torus creation failed: {:?}", e))?;
+            let num_tris = u_segments * v_segments * 2;
+            let mut tri_verts: Vec<u32> = Vec::with_capacity(num_tris * 3);
+            for i in 0..u_segments {
+                let i_next = (i + 1) % u_segments;
+                for j in 0..v_segments {
+                    let j_next = (j + 1) % v_segments;
+                    let v00 = (i * v_segments + j) as u32;
+                    let v10 = (i_next * v_segments + j) as u32;
+                    let v01 = (i * v_segments + j_next) as u32;
+                    let v11 = (i_next * v_segments + j_next) as u32;
+                    tri_verts.extend_from_slice(&[v00, v10, v11]);
+                    tri_verts.extend_from_slice(&[v00, v11, v01]);
+                }
+            }
 
-            let rx = -std::f64::consts::FRAC_PI_2;
-            let (sx, cx) = (rx.sin(), rx.cos());
-            let matrix = Matrix4x3::new([
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(0.0, cx, -sx),
-                Vec3::new(0.0, sx, cx),
-                Vec3::new(0.0, 0.0, 0.0),
-            ]);
-
-            Ok(torus.transform(matrix))
+            let torus: Manifold = unsafe {
+                let mesh_ptr = manifold_meshgl(
+                    manifold_alloc_meshgl(),
+                    vert_props.as_ptr(),
+                    num_verts,
+                    6,
+                    tri_verts.as_ptr(),
+                    num_tris,
+                );
+                let manifold_ptr = manifold_of_meshgl(manifold_alloc_manifold(), mesh_ptr);
+                std::mem::transmute(manifold_ptr)
+            };
+            Ok(torus)
         }
         "ring" => {
             // Ring (annulus with height) for coupling coils
-            // Created by revolving a rectangle around Z axis
+            // Created as difference of two cylinders
             let inner_radius: f64 = params.get("inner_radius")?;
             let outer_radius: f64 = params.get("outer_radius")?;
             let h: f64 = params.get("h")?;
 
-            // Create rectangle cross-section (in XY plane, will revolve around Y axis)
-            // Points define a rectangle from inner to outer radius, height h
-            let points = vec![
-                Point2 { x: inner_radius, y: 0.0 },
-                Point2 { x: outer_radius, y: 0.0 },
-                Point2 { x: outer_radius, y: h },
-                Point2 { x: inner_radius, y: h },
-            ];
+            let pos = |v: f64| PositiveF64::new(v).unwrap();
+            let outer = Manifold::new_cylinder(
+                pos(h),
+                pos(outer_radius),
+                None::<PositiveF64>,
+                Some(PositiveI32::new(circular_segments as i32).unwrap()),
+                false,
+            );
+            let inner = Manifold::new_cylinder(
+                pos(h + 0.01),
+                pos(inner_radius),
+                None::<PositiveF64>,
+                Some(PositiveI32::new(circular_segments as i32).unwrap()),
+                false,
+            );
 
-            let simple_polygon = SimplePolygon::new_from_points(points);
-            let polygons = Polygons::from_simple_polygons(vec![simple_polygon]);
-            let ring = polygons
-                .revolve(
-                    Some(PositiveI32::new(circular_segments as i32).unwrap()),
-                    Option::<manifold3d::types::NormalizedAngle>::None,
-                )
-                .map_err(|e| anyhow!("Ring creation failed: {:?}", e))?;
-
-            // Rotate to have Z as vertical axis (revolve creates around Y)
-            let rx = -std::f64::consts::FRAC_PI_2;
-            let (sx, cx) = (rx.sin(), rx.cos());
-            let matrix = Matrix4x3::new([
-                Vec3::new(1.0, 0.0, 0.0),
-                Vec3::new(0.0, cx, -sx),
-                Vec3::new(0.0, sx, cx),
-                Vec3::new(0.0, 0.0, 0.0),
-            ]);
-
-            Ok(ring.transform(matrix))
+            Ok(outer.difference(&inner))
         }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }

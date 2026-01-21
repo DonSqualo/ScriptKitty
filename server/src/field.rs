@@ -227,6 +227,44 @@ impl PointMeasurement {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct LineMeasurement {
+    pub name: String,
+    pub start: [f64; 3],
+    pub stop: [f64; 3],
+    pub positions: Vec<f32>,
+    pub values: Vec<f32>,
+    pub magnitudes: Vec<f32>,
+}
+
+impl LineMeasurement {
+    pub fn to_binary(&self) -> Vec<u8> {
+        let num_points = self.magnitudes.len();
+        let mut data = Vec::with_capacity(64 + num_points * 28);
+        data.extend_from_slice(b"LNPROBE\0");
+        data.extend_from_slice(&(num_points as u32).to_le_bytes());
+        for &v in &self.start {
+            data.extend_from_slice(&(v as f32).to_le_bytes());
+        }
+        for &v in &self.stop {
+            data.extend_from_slice(&(v as f32).to_le_bytes());
+        }
+        for &v in &self.positions {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        for &v in &self.values {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        for &v in &self.magnitudes {
+            data.extend_from_slice(&v.to_le_bytes());
+        }
+        let name_bytes = self.name.as_bytes();
+        data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+        data.extend_from_slice(name_bytes);
+        data
+    }
+}
+
 /// Compute magnetic field at a specific point for GaussMeter measurements
 /// Uses same Helmholtz coil configuration as visualization
 pub fn compute_point_field(

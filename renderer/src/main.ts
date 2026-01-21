@@ -39,6 +39,11 @@ const graph_canvas = document.getElementById('graph-canvas') as HTMLCanvasElemen
 const graph_ctx = graph_canvas.getContext('2d')!;
 const graph_window = document.getElementById('graph-window')!;
 
+// NanoVNA canvas
+const nanovna_canvas = document.getElementById('nanovna-canvas') as HTMLCanvasElement;
+const nanovna_ctx = nanovna_canvas.getContext('2d')!;
+const nanovna_window = document.getElementById('nanovna-window')!;
+
 declare function openWindow(id: string): void;
 
 // X-ray material (Fresnel-based transparency with vertex colors)
@@ -586,6 +591,129 @@ function draw_graph(line: { z: Float32Array, bz: Float32Array }) {
   ctx.fillText(`CTR: ${(line.bz[center_idx] * 1000).toFixed(3)} mT`, width - 130, 28);
 }
 
+// Parse NanoVNA data
+function parse_nanovna_data(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  let offset = 8; // Skip "NANOVNA\0" header
+
+  const num_points = view.getUint32(offset, true); offset += 4;
+  const min_s11_db = view.getFloat32(offset, true); offset += 4;
+  const min_s11_freq = view.getFloat32(offset, true); offset += 4;
+
+  const frequencies = new Float32Array(num_points);
+  const magnitudes = new Float32Array(num_points);
+  const phases = new Float32Array(num_points);
+
+  for (let i = 0; i < num_points; i++) {
+    frequencies[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  for (let i = 0; i < num_points; i++) {
+    magnitudes[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  for (let i = 0; i < num_points; i++) {
+    phases[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  return {
+    num_points,
+    min_s11_db,
+    min_s11_freq,
+    frequencies,
+    magnitudes,
+    phases,
+  };
+}
+
+// Draw NanoVNA S11 graph
+function draw_nanovna(data: { frequencies: Float32Array, magnitudes: Float32Array, min_s11_db: number, min_s11_freq: number }) {
+  const ctx = nanovna_ctx;
+  const width = nanovna_canvas.width;
+  const height = nanovna_canvas.height;
+
+  openWindow('nanovna-window');
+
+  // Clear
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+  ctx.fillRect(0, 0, width, height);
+
+  const f_min = data.frequencies[0];
+  const f_max = data.frequencies[data.frequencies.length - 1];
+
+  // Find magnitude range
+  let mag_min = 0;
+  let mag_max = -60;
+  for (let i = 0; i < data.magnitudes.length; i++) {
+    mag_max = Math.max(mag_max, data.magnitudes[i]);
+    mag_min = Math.min(mag_min, data.magnitudes[i]);
+  }
+  mag_min = Math.floor(mag_min / 10) * 10;
+  mag_max = 0;
+
+  // Draw axes
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(40, 10);
+  ctx.lineTo(40, height - 30);
+  ctx.lineTo(width - 10, height - 30);
+  ctx.stroke();
+
+  // Draw -3dB reference line
+  const ref_y = height - 30 - ((-3 - mag_min) / (mag_max - mag_min)) * (height - 50);
+  ctx.strokeStyle = '#444';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(40, ref_y);
+  ctx.lineTo(width - 10, ref_y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw S11 magnitude
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+
+  for (let i = 0; i < data.frequencies.length; i++) {
+    const x = 40 + ((data.frequencies[i] - f_min) / (f_max - f_min)) * (width - 60);
+    const y = height - 30 - ((data.magnitudes[i] - mag_min) / (mag_max - mag_min)) * (height - 50);
+
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Mark minimum point
+  const min_x = 40 + ((data.min_s11_freq - f_min) / (f_max - f_min)) * (width - 60);
+  const min_y = height - 30 - ((data.min_s11_db - mag_min) / (mag_max - mag_min)) * (height - 50);
+  ctx.fillStyle = '#f00';
+  ctx.beginPath();
+  ctx.arc(min_x, min_y, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Labels
+  ctx.fillStyle = '#888';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.fillText('S11 (dB)', 5, 15);
+  ctx.fillText(`${mag_max}`, 5, 28);
+  ctx.fillText(`${mag_min}`, 5, height - 35);
+  ctx.fillText('Freq (MHz)', width - 70, height - 5);
+  ctx.fillText(`${(f_min / 1e6).toFixed(1)}`, 35, height - 15);
+  ctx.fillText(`${(f_max / 1e6).toFixed(1)}`, width - 40, height - 15);
+
+  // Min S11 indicator
+  ctx.fillStyle = '#0f0';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.fillText(`MIN: ${data.min_s11_db.toFixed(1)} dB @ ${(data.min_s11_freq / 1e6).toFixed(2)} MHz`, width - 180, 15);
+}
+
 // Parse circuit data
 function parse_circuit_data(buffer: ArrayBuffer) {
   const view = new DataView(buffer);
@@ -652,6 +780,14 @@ function update_mesh(buffer: ArrayBuffer) {
     const circuit_data = parse_circuit_data(buffer);
     console.log(`Circuit data: ${circuit_data.size.width}x${circuit_data.size.height}`);
     display_circuit_overlay(circuit_data);
+    return;
+  }
+
+  // Handle NanoVNA data
+  if (header_8 === 'NANOVNA\0') {
+    const nanovna_data = parse_nanovna_data(buffer);
+    console.log(`NanoVNA data: ${nanovna_data.num_points} points, min S11: ${nanovna_data.min_s11_db.toFixed(1)} dB @ ${(nanovna_data.min_s11_freq / 1e6).toFixed(2)} MHz`);
+    draw_nanovna(nanovna_data);
     return;
   }
 

@@ -1,32 +1,72 @@
 # Implementation Plan
 
-ScriptKitty v0.0.4 - Prioritized implementation backlog (2026-01-21).
-
-## High Priority
-
-### Signal Generator → Amplifier → Coupling Coil Circuit
-Connect circuit diagram components to coupling coil geometry.
-- Circuit components exist: SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad (`server/src/circuit.rs`)
-- Need: Wire coupling coil impedance to MatchingNetwork calculation
-- Location: `stdlib/circuits.lua`, `server/src/circuit.rs`
+ScriptKitty v0.0.5 - Prioritized implementation backlog (2026-01-21).
 
 ## Medium Priority
 
-### Draggable Windows for Multiphysics
-Add movable UI windows for field plane controls.
-- Basic window framework exists in renderer
-- Need: z-ordering
-
-### Circuit Simulation (Beyond Visualization)
+### Circuit Simulation (Beyond SVG)
 Current `circuit.rs` generates SVG diagrams only; no SPICE-like simulation.
 - Could add: AC analysis, impedance at frequency, power transfer calculation
-- Lower priority than NanoVNA which covers frequency sweep use case
+- Lower priority - NanoVNA covers frequency sweep use case
 
 ## Low Priority
 
 ### Mesh Validation
 - Non-manifold geometry detection
 - Zero-volume solid warnings
+- Files: `server/src/geometry.rs`
+
+### View State Serialization
+Camera, visibility, and clipping NOT sent to renderer (per `specs/stdlib/view.md:86-89`).
+- Only `flat_shading` and `circular_segments` are serialized
+- If needed: extend VIEW WebSocket message to include camera position/target
+
+## Recently Fixed
+
+### Torus Primitive Rewrite (2026-01-21)
+Replaced `Polygons.revolve()` with parametric mesh generation.
+- Uses parametric equations: x = (R + r·cos(v))·cos(u), y = (R + r·cos(v))·sin(u), z = r·sin(v)
+- Generates vertices and normals for u_segments × v_segments grid
+- Creates Manifold via FFI to MeshGL
+- File: `server/src/geometry.rs:226-282`
+
+### Circuit → NanoVNA Impedance Integration (2026-01-21)
+MatchingNetwork can now auto-populate impedance from NanoVNA computation.
+- Added `nanovna::compute_impedance_at_frequency()` function
+- MatchingNetwork accepts `use_nanovna: true` config option
+- Falls back to static impedance values if NanoVNA config not found
+- Files: `server/src/nanovna.rs`, `server/src/main.rs`
+
+### Probe Backend Computation (2026-01-21)
+Implemented line probe B-field sampling backend.
+- Added `LineMeasurement` struct with binary serialization (LNPROBE header)
+- `try_compute_probe_measurements()` samples B-field along line
+- Uses same Biot-Savart computation as GaussMeter
+- Files: `server/src/field.rs`, `server/src/main.rs`
+
+### Window Z-Ordering (2026-01-21)
+Implemented click-to-focus z-ordering for draggable windows.
+- Added base z-index: 50 to .tui-window class
+- Tracks topZIndex counter, increments on window click
+- Files: `renderer/index.html`
+
+### Magnetic Field Pattern Matching (2026-01-21)
+Backend now recognizes `Coil` global (project convention) in addition to `config` global.
+- `main.rs:try_compute_helmholtz_field` reads from `Coil.mean_radius`, `Coil.gap`, etc.
+- `main.rs:try_compute_gaussmeter_measurements` updated similarly
+- Also reads `Wire` global for wire diameter and packing factor
+
+### NanoVNA Renderer Support (2026-01-21)
+Added NanoVNA S11 display to renderer:
+- `renderer/index.html`: Added nanovna-window with canvas
+- `renderer/src/main.ts`: Added parse_nanovna_data() and draw_nanovna()
+- `server/src/main.rs`: Added current_nanovna state caching for new WebSocket clients
+
+### Ring Primitive Fix (2026-01-21)
+Fixed `ring` primitive failing with `InvalidConstruction` error.
+- Problem: `Polygons.revolve()` was failing with the rectangle cross-section
+- Solution: Reimplemented ring as difference of two cylinders in `geometry.rs`
+- Ring now created correctly via `outer_cylinder.difference(&inner_cylinder)`
 
 ## Completed (Reference)
 
@@ -51,6 +91,7 @@ Current `circuit.rs` generates SVG diagrams only; no SPICE-like simulation.
 - Hydrophone backend computation for point pressure measurement
 - MagneticFieldPlane with XY/YZ/XZ plane support
 - AcousticPressurePlane with XY/YZ/XZ plane and colormap support
+- Probe line measurement for B-field sampling along arbitrary lines
 
 ### Materials
 - Comprehensive acoustic properties database

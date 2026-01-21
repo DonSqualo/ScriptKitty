@@ -41,6 +41,7 @@
       box-shadow: 4px 4px 0 #333;
       min-width: 200px;
       display: none;
+      z-index: 50;
     }
 
     .tui-window.visible {
@@ -154,7 +155,7 @@
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-Br6kw0NO.js"></script>
+  <script type="module" crossorigin src="/assets/index-wZK60W0A.js"></script>
 </head>
 <body>
   <div class="noise"></div>
@@ -177,6 +178,16 @@
     </div>
   </div>
 
+  <div id="nanovna-window" class="tui-window" style="bottom: 220px; right: 20px; width: 320px;">
+    <div class="tui-titlebar">
+      <span>NanoVNA S11</span>
+      <span class="tui-close" onclick="closeWindow('nanovna-window')">X</span>
+    </div>
+    <div class="tui-content">
+      <canvas id="nanovna-canvas" width="300" height="180"></canvas>
+    </div>
+  </div>
+
   <script>
     function closeWindow(id) {
       document.getElementById(id).classList.remove('visible');
@@ -187,6 +198,7 @@
     }
 
     // Draggable windows
+    let topZIndex = 50;
     document.querySelectorAll('.tui-titlebar').forEach(titlebar => {
       let isDragging = false;
       let offsetX, offsetY;
@@ -194,6 +206,7 @@
 
       titlebar.addEventListener('mousedown', (e) => {
         if (e.target.classList.contains('tui-close')) return;
+        win.style.zIndex = ++topZIndex;
         isDragging = true;
         offsetX = e.clientX - win.offsetLeft;
         offsetY = e.clientY - win.offsetTop;

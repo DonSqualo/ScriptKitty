@@ -41,6 +41,7 @@
       box-shadow: 4px 4px 0 #333;
       min-width: 200px;
       display: none;
+      z-index: 50;
     }
 
     .tui-window.visible {
@@ -176,6 +177,16 @@
     </div>
   </div>
 
+  <div id="nanovna-window" class="tui-window" style="bottom: 220px; right: 20px; width: 320px;">
+    <div class="tui-titlebar">
+      <span>NanoVNA S11</span>
+      <span class="tui-close" onclick="closeWindow('nanovna-window')">X</span>
+    </div>
+    <div class="tui-content">
+      <canvas id="nanovna-canvas" width="300" height="180"></canvas>
+    </div>
+  </div>
+
   <script>
     function closeWindow(id) {
       document.getElementById(id).classList.remove('visible');
@@ -186,6 +197,7 @@
     }
 
     // Draggable windows
+    let topZIndex = 50;
     document.querySelectorAll('.tui-titlebar').forEach(titlebar => {
       let isDragging = false;
       let offsetX, offsetY;
@@ -193,6 +205,7 @@
 
       titlebar.addEventListener('mousedown', (e) => {
         if (e.target.classList.contains('tui-close')) return;
+        win.style.zIndex = ++topZIndex;
         isDragging = true;
         offsetX = e.clientX - win.offsetLeft;
         offsetY = e.clientY - win.offsetTop;

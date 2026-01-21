@@ -147,6 +147,17 @@ fn calculate_s11(z_real: f64, z_imag: f64) -> (f64, f64) {
 
 // ===========================
 
+/// Compute impedance at a specific frequency for the configured coil
+/// Returns (z_real, z_imag) in Ohms
+pub fn compute_impedance_at_frequency(config: &NanoVNAConfig, frequency: f64) -> (f64, f64) {
+    let inductance = calculate_inductance(
+        config.coil_radius,
+        config.num_turns,
+        config.wire_diameter,
+    );
+    calculate_impedance(frequency, inductance, config.coil_resistance)
+}
+
 /// Compute full NanoVNA frequency sweep
 pub fn compute_frequency_sweep(config: &NanoVNAConfig) -> FrequencySweep {
     let inductance = calculate_inductance(
