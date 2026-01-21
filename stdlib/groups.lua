@@ -80,8 +80,17 @@ function Groups.group(name, children)
       return self:center(true, true, false)
     end,
 
+    centered = function(self)
+      return self:center(true, true, true)
+    end,
+
     material = function(self, mat)
       self._material = mat
+      return self
+    end,
+
+    color = function(self, r, g, b, a)
+      self._color = {r, g, b, a or 1.0}
       return self
     end,
 
@@ -159,6 +168,7 @@ function Groups.group(name, children)
         children = children_serialized,
         ops = self._ops,
         material = self._material,
+        color = self._color,
         visible = self._visible,
         locked = self._locked
       }

@@ -21,19 +21,14 @@ use tokio::sync::{broadcast, mpsc, RwLock};
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 
-mod acoustic;
-mod circuit;
 mod export;
 mod field;
 mod geometry;
-#[cfg(feature = "manifold")]
-mod geometry_manifold;
 
 struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
     current_mesh: RwLock<Option<Vec<u8>>>,
     current_field: RwLock<Option<Vec<u8>>>,
-    current_circuit: RwLock<Option<Vec<u8>>>,
 }
 
 #[tokio::main]
@@ -58,21 +53,16 @@ async fn main() -> Result<()> {
         mesh_tx: mesh_tx.clone(),
         current_mesh: RwLock::new(None),
         current_field: RwLock::new(None),
-        current_circuit: RwLock::new(None),
     });
 
-    // Handle mesh/field/circuit results
+    // Handle mesh/field results
     let state_clone = state.clone();
     tokio::spawn(async move {
         while let Some(data) = result_rx.recv().await {
-            // Check data type by header
             let is_field = data.len() >= 5 && &data[0..5] == b"FIELD";
-            let is_circuit = data.len() >= 8 && &data[0..8] == b"CIRCUIT\0";
 
             if is_field {
                 *state_clone.current_field.write().await = Some(data.clone());
-            } else if is_circuit {
-                *state_clone.current_circuit.write().await = Some(data.clone());
             } else {
                 *state_clone.current_mesh.write().await = Some(data.clone());
             }
@@ -167,24 +157,6 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             );
             let _ = tx.send(field_binary);
         }
-
-        // Try to compute acoustic field if this has acoustic study
-        if let Some(acoustic_data) = try_compute_acoustic_field(&lua, &content) {
-            let acoustic_binary = acoustic_data.to_binary();
-            info!(
-                "Generated acoustic field: {}x{} slice, {} bytes",
-                acoustic_data.slice_width,
-                acoustic_data.slice_height,
-                acoustic_binary.len()
-            );
-            let _ = tx.send(acoustic_binary);
-        }
-
-        // Try to generate circuit diagram
-        if let Some(circuit_binary) = try_generate_circuit(&lua, &content) {
-            info!("Generated circuit diagram: {} bytes", circuit_binary.len());
-            let _ = tx.send(circuit_binary);
-        }
     }
 }
 
@@ -238,75 +210,11 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
     ))
 }
 
-fn try_compute_acoustic_field(lua: &mlua::Lua, content: &str) -> Option<acoustic::AcousticFieldData> {
-    if !content.contains("acoustic(") && !content.contains("Acoustic") {
-        return None;
-    }
-
-    let result: mlua::Value = lua.load(content).eval().ok()?;
-    let _table = result.as_table()?;
-
-    let globals = lua.globals();
-
-    let acoustic_table: mlua::Table = globals.get("Acoustic").ok()?;
-    let frequency: f64 = acoustic_table.get("frequency").unwrap_or(1e6);
-    let drive_current: f64 = acoustic_table.get("drive_current").unwrap_or(0.1);
-
-    let transducer: mlua::Table = globals.get("Transducer").ok()?;
-    let transducer_diameter: f64 = transducer.get("diameter").unwrap_or(12.0);
-    let transducer_height: f64 = transducer.get("height_from_coverslip").unwrap_or(5.0);
-
-    let poly_tube: mlua::Table = globals.get("PolyTube").ok()?;
-    let inner_diameter: f64 = poly_tube.get("inner_diameter").unwrap_or(26.0);
-
-    let medium: mlua::Table = globals.get("Medium").ok()?;
-    let liquid_height: f64 = medium.get("liquid_height").unwrap_or(8.0);
-
-    info!(
-        "Computing acoustic field: f={:.0} Hz, transducer r={:.1}mm at z={:.1}mm",
-        frequency, transducer_diameter / 2.0, transducer_height
-    );
-
-    let config = acoustic::AcousticConfig {
-        frequency,
-        transducer_radius: transducer_diameter / 2.0,
-        transducer_z: transducer_height,
-        medium_radius: inner_diameter / 2.0 - 0.1,
-        medium_height: liquid_height,
-        speed_of_sound: 1480.0 * 1000.0,
-        drive_amplitude: drive_current * 100.0,
-    };
-
-    Some(acoustic::compute_acoustic_field(&config))
-}
-
-fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<Vec<u8>> {
-    if !content.contains("Circuit") {
-        return None;
-    }
-
-    let result: mlua::Value = lua.load(content).eval().ok()?;
-    let table = result.as_table()?;
-
-    let circuit_table: mlua::Table = table.get("circuit").ok()?;
-    let circuit_type: String = circuit_table.get("type").ok()?;
-
-    if circuit_type != "circuit" {
-        return None;
-    }
-
-    match circuit::generate_circuit_from_lua(lua, &circuit_table) {
-        Ok(circuit_data) => Some(circuit::serialize_circuit(&circuit_data)),
-        Err(e) => {
-            error!("Circuit generation error: {}", e);
-            None
-        }
-    }
-}
-
 struct ProcessResult {
     mesh: geometry::MeshData,
     flat_shading: bool,
+    #[allow(dead_code)]
+    circular_segments: u32,
 }
 
 fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Path) -> Result<ProcessResult> {
@@ -319,36 +227,27 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
     let result: mlua::Value = lua.load(content).eval()?;
 
     // Extract view config
-    let flat_shading = if let Some(table) = result.as_table() {
+    let (flat_shading, circular_segments) = if let Some(table) = result.as_table() {
         if let Ok(view) = table.get::<_, mlua::Table>("view") {
-            view.get::<_, bool>("flat_shading").unwrap_or(false)
+            (
+                view.get::<_, bool>("flat_shading").unwrap_or(false),
+                view.get::<_, u32>("circular_segments").unwrap_or(32),
+            )
         } else {
-            false
+            (false, 32)
         }
     } else {
-        false
+        (false, 32)
     };
 
-    // Use manifold backend if feature is enabled
-    #[cfg(feature = "manifold")]
-    let mesh = {
-        info!("Using Manifold backend for CSG");
-        geometry_manifold::generate_mesh_from_lua_manifold(lua, &result)?
-    };
+    info!("Using Manifold backend for CSG, circular_segments={}", circular_segments);
+    let mesh = geometry::generate_mesh_from_lua_manifold(lua, &result, circular_segments)?;
 
-    #[cfg(not(feature = "manifold"))]
-    let mesh = geometry::generate_mesh_from_lua(lua, &result)?;
-
-    // Process exports directly from the result table
     if let Some(table) = result.as_table() {
-        #[cfg(feature = "manifold")]
-        export::process_exports_from_table_manifold(lua, table, base_dir);
-
-        #[cfg(not(feature = "manifold"))]
         export::process_exports_from_table(lua, table, base_dir);
     }
 
-    Ok(ProcessResult { mesh, flat_shading })
+    Ok(ProcessResult { mesh, flat_shading, circular_segments })
 }
 
 async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>) {
@@ -394,11 +293,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     // Send current field if available
     if let Some(field) = state.current_field.read().await.clone() {
         let _ = sender.send(Message::Binary(field.into())).await;
-    }
-
-    // Send current circuit if available
-    if let Some(circuit) = state.current_circuit.read().await.clone() {
-        let _ = sender.send(Message::Binary(circuit.into())).await;
     }
 
     loop {

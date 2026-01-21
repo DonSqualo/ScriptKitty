@@ -1,13 +1,12 @@
-//! Mesh generation with procedural primitives and CSG fallback
-//!
-//! Uses procedural generation for known shapes (produces clean manifolds),
-//! with csgrs as fallback for arbitrary CSG operations.
+//! Manifold-based CSG geometry backend
+//! Uses manifold3d for guaranteed watertight manifold meshes
 
 use anyhow::{anyhow, Result};
-use csgrs::mesh::Mesh as CsgMesh;
-use csgrs::traits::CSG;
+use manifold3d::types::{Matrix4x3, PositiveF64, Vec3};
+use manifold3d::{Manifold, MeshGL};
 use mlua::{Lua, Value};
-use std::f32::consts::PI;
+use std::alloc::{alloc, Layout};
+use std::os::raw::c_void;
 
 /// Mesh data for WebSocket transfer
 pub struct MeshData {
@@ -18,46 +17,12 @@ pub struct MeshData {
 }
 
 impl MeshData {
-    fn new() -> Self {
+    pub fn new_empty() -> Self {
         MeshData {
             positions: Vec::new(),
             normals: Vec::new(),
             colors: Vec::new(),
             indices: Vec::new(),
-        }
-    }
-
-    pub fn new_empty() -> Self {
-        Self::new()
-    }
-
-    fn add_vertex(&mut self, pos: [f32; 3], normal: [f32; 3]) -> u32 {
-        let idx = (self.positions.len() / 3) as u32;
-        self.positions.extend_from_slice(&pos);
-        self.normals.extend_from_slice(&normal);
-        self.colors.extend_from_slice(&[1.0, 1.0, 1.0]); // default white
-        idx
-    }
-
-    fn add_triangle(&mut self, a: u32, b: u32, c: u32) {
-        self.indices.extend_from_slice(&[a, b, c]);
-    }
-
-    fn set_color(&mut self, r: f32, g: f32, b: f32) {
-        for i in 0..self.colors.len() / 3 {
-            self.colors[i * 3] = r;
-            self.colors[i * 3 + 1] = g;
-            self.colors[i * 3 + 2] = b;
-        }
-    }
-
-    fn merge(&mut self, other: &MeshData) {
-        let offset = (self.positions.len() / 3) as u32;
-        self.positions.extend_from_slice(&other.positions);
-        self.normals.extend_from_slice(&other.normals);
-        self.colors.extend_from_slice(&other.colors);
-        for &idx in &other.indices {
-            self.indices.push(idx + offset);
         }
     }
 
@@ -86,652 +51,175 @@ impl MeshData {
     }
 }
 
-const SEGMENTS: usize = 64;
-
-// ============================================================================
-// Procedural mesh generators (produce clean manifolds)
-// ============================================================================
-
-fn procedural_cylinder(radius: f32, height: f32) -> MeshData {
-    let mut mesh = MeshData::new();
-
-    // Side wall (base at z=0, top at z=height)
-    let mut bottom_ring = Vec::new();
-    let mut top_ring = Vec::new();
-
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        let x = radius * angle.cos();
-        let y = radius * angle.sin();
-        let nx = angle.cos();
-        let ny = angle.sin();
-
-        bottom_ring.push(mesh.add_vertex([x, y, 0.0], [nx, ny, 0.0]));
-        top_ring.push(mesh.add_vertex([x, y, height], [nx, ny, 0.0]));
-    }
-
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(bottom_ring[i], bottom_ring[next], top_ring[next]);
-        mesh.add_triangle(bottom_ring[i], top_ring[next], top_ring[i]);
-    }
-
-    // Bottom cap (z=0)
-    let bottom_center = mesh.add_vertex([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
-    let mut bottom_cap = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        bottom_cap.push(mesh.add_vertex(
-            [radius * angle.cos(), radius * angle.sin(), 0.0],
-            [0.0, 0.0, -1.0],
-        ));
-    }
-    for i in 0..SEGMENTS {
-        mesh.add_triangle(bottom_center, bottom_cap[(i + 1) % SEGMENTS], bottom_cap[i]);
-    }
-
-    // Top cap (z=height)
-    let top_center = mesh.add_vertex([0.0, 0.0, height], [0.0, 0.0, 1.0]);
-    let mut top_cap = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        top_cap.push(mesh.add_vertex(
-            [radius * angle.cos(), radius * angle.sin(), height],
-            [0.0, 0.0, 1.0],
-        ));
-    }
-    for i in 0..SEGMENTS {
-        mesh.add_triangle(top_center, top_cap[i], top_cap[(i + 1) % SEGMENTS]);
-    }
-
-    mesh
+// FFI to access tri_verts which isn't exposed in the high-level Rust API
+extern "C" {
+    fn manifold_meshgl_tri_verts(mem: *mut c_void, m: *mut std::ffi::c_void) -> *mut u32;
 }
 
-fn procedural_tube(outer_r: f32, inner_r: f32, height: f32) -> MeshData {
-    let mut mesh = MeshData::new();
-
-    // Outer wall (normals pointing out, base at z=0)
-    let mut outer_bottom = Vec::new();
-    let mut outer_top = Vec::new();
-
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        let x = outer_r * angle.cos();
-        let y = outer_r * angle.sin();
-        let nx = angle.cos();
-        let ny = angle.sin();
-
-        outer_bottom.push(mesh.add_vertex([x, y, 0.0], [nx, ny, 0.0]));
-        outer_top.push(mesh.add_vertex([x, y, height], [nx, ny, 0.0]));
+fn get_mesh_indices(mesh: &MeshGL, count: usize) -> Vec<u32> {
+    if count == 0 {
+        return vec![];
     }
+    let layout = Layout::array::<u32>(count).unwrap();
+    let array_ptr = unsafe { alloc(layout) } as *mut u32;
 
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(outer_bottom[i], outer_bottom[next], outer_top[next]);
-        mesh.add_triangle(outer_bottom[i], outer_top[next], outer_top[i]);
+    // MeshGL stores its internal pointer at offset 0
+    let mesh_ptr = unsafe { std::ptr::read(mesh as *const MeshGL as *const *mut c_void) };
+
+    unsafe {
+        manifold_meshgl_tri_verts(array_ptr as *mut c_void, mesh_ptr);
+        Vec::from_raw_parts(array_ptr, count, count)
     }
-
-    // Inner wall (normals pointing in)
-    let mut inner_bottom = Vec::new();
-    let mut inner_top = Vec::new();
-
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        let x = inner_r * angle.cos();
-        let y = inner_r * angle.sin();
-        let nx = -angle.cos();
-        let ny = -angle.sin();
-
-        inner_bottom.push(mesh.add_vertex([x, y, 0.0], [nx, ny, 0.0]));
-        inner_top.push(mesh.add_vertex([x, y, height], [nx, ny, 0.0]));
-    }
-
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(inner_bottom[i], inner_top[next], inner_bottom[next]);
-        mesh.add_triangle(inner_bottom[i], inner_top[i], inner_top[next]);
-    }
-
-    // Bottom annulus (z=0, normal pointing down)
-    let mut ob = Vec::new();
-    let mut ib = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        ob.push(mesh.add_vertex(
-            [outer_r * angle.cos(), outer_r * angle.sin(), 0.0],
-            [0.0, 0.0, -1.0],
-        ));
-        ib.push(mesh.add_vertex(
-            [inner_r * angle.cos(), inner_r * angle.sin(), 0.0],
-            [0.0, 0.0, -1.0],
-        ));
-    }
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(ob[i], ib[next], ib[i]);
-        mesh.add_triangle(ob[i], ob[next], ib[next]);
-    }
-
-    // Top annulus (z=height, normal pointing up)
-    let mut ot = Vec::new();
-    let mut it = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        ot.push(mesh.add_vertex(
-            [outer_r * angle.cos(), outer_r * angle.sin(), height],
-            [0.0, 0.0, 1.0],
-        ));
-        it.push(mesh.add_vertex(
-            [inner_r * angle.cos(), inner_r * angle.sin(), height],
-            [0.0, 0.0, 1.0],
-        ));
-    }
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(ot[i], it[i], it[next]);
-        mesh.add_triangle(ot[i], it[next], ot[next]);
-    }
-
-    mesh
 }
 
-fn procedural_box(w: f32, d: f32, h: f32) -> MeshData {
-    let mut mesh = MeshData::new();
+fn manifold_to_mesh_data(manifold: &Manifold) -> MeshData {
+    let mesh = manifold.as_mesh();
+    let properties = mesh.vertex_properties();
+    let num_props = mesh.properties_per_vertex_count() as usize;
+    let num_verts = mesh.vertex_count() as usize;
+    let num_tris = mesh.triangle_count() as usize;
+    let index_count = num_tris * 3;
 
-    // Box with corner at origin, extends to (w, d, h)
-    let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
-        ([1.0, 0.0, 0.0], [[w, 0.0, 0.0], [w, d, 0.0], [w, d, h], [w, 0.0, h]]),
-        ([-1.0, 0.0, 0.0], [[0.0, d, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, h], [0.0, d, h]]),
-        ([0.0, 1.0, 0.0], [[w, d, 0.0], [0.0, d, 0.0], [0.0, d, h], [w, d, h]]),
-        ([0.0, -1.0, 0.0], [[0.0, 0.0, 0.0], [w, 0.0, 0.0], [w, 0.0, h], [0.0, 0.0, h]]),
-        ([0.0, 0.0, 1.0], [[0.0, 0.0, h], [w, 0.0, h], [w, d, h], [0.0, d, h]]),
-        ([0.0, 0.0, -1.0], [[w, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, d, 0.0], [w, d, 0.0]]),
-    ];
+    let mut data = MeshData::new_empty();
 
-    for (normal, verts) in faces {
-        let v0 = mesh.add_vertex(verts[0], normal);
-        let v1 = mesh.add_vertex(verts[1], normal);
-        let v2 = mesh.add_vertex(verts[2], normal);
-        let v3 = mesh.add_vertex(verts[3], normal);
-        mesh.add_triangle(v0, v1, v2);
-        mesh.add_triangle(v0, v2, v3);
+    if num_verts == 0 || num_props < 3 {
+        return data;
     }
 
-    mesh
-}
-
-// Box with centered cylindrical hole (centered XY, base at z=0)
-fn procedural_box_with_hole(w: f32, d: f32, h: f32, hole_r: f32) -> MeshData {
-    let mut mesh = MeshData::new();
-    let cx = w / 2.0;
-    let cy = d / 2.0;
-
-    // 4 outer side walls
-    let faces: [([f32; 3], [[f32; 3]; 4]); 4] = [
-        ([1.0, 0.0, 0.0], [[w, 0.0, 0.0], [w, d, 0.0], [w, d, h], [w, 0.0, h]]),
-        ([-1.0, 0.0, 0.0], [[0.0, d, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, h], [0.0, d, h]]),
-        ([0.0, 1.0, 0.0], [[w, d, 0.0], [0.0, d, 0.0], [0.0, d, h], [w, d, h]]),
-        ([0.0, -1.0, 0.0], [[0.0, 0.0, 0.0], [w, 0.0, 0.0], [w, 0.0, h], [0.0, 0.0, h]]),
-    ];
-    for (normal, verts) in faces {
-        let v0 = mesh.add_vertex(verts[0], normal);
-        let v1 = mesh.add_vertex(verts[1], normal);
-        let v2 = mesh.add_vertex(verts[2], normal);
-        let v3 = mesh.add_vertex(verts[3], normal);
-        mesh.add_triangle(v0, v1, v2);
-        mesh.add_triangle(v0, v2, v3);
-    }
-
-    // Inner cylindrical surface (normals pointing inward)
-    let mut inner_bottom = Vec::new();
-    let mut inner_top = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        let x = cx + hole_r * angle.cos();
-        let y = cy + hole_r * angle.sin();
-        let nx = -angle.cos();
-        let ny = -angle.sin();
-        inner_bottom.push(mesh.add_vertex([x, y, 0.0], [nx, ny, 0.0]));
-        inner_top.push(mesh.add_vertex([x, y, h], [nx, ny, 0.0]));
-    }
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        mesh.add_triangle(inner_bottom[i], inner_top[next], inner_bottom[next]);
-        mesh.add_triangle(inner_bottom[i], inner_top[i], inner_top[next]);
-    }
-
-    // Top face with hole (z=h, triangulate from box corners to circle)
-    let corners_top = [
-        mesh.add_vertex([0.0, 0.0, h], [0.0, 0.0, 1.0]),
-        mesh.add_vertex([w, 0.0, h], [0.0, 0.0, 1.0]),
-        mesh.add_vertex([w, d, h], [0.0, 0.0, 1.0]),
-        mesh.add_vertex([0.0, d, h], [0.0, 0.0, 1.0]),
-    ];
-    let mut circle_top = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        circle_top.push(mesh.add_vertex(
-            [cx + hole_r * angle.cos(), cy + hole_r * angle.sin(), h],
-            [0.0, 0.0, 1.0],
-        ));
-    }
-    // Fan triangles from each corner to nearby circle segments
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        let angle = (i as f32 + 0.5) / SEGMENTS as f32 * 2.0 * PI;
-        let corner_idx = if angle < PI / 2.0 { 1 } else if angle < PI { 2 } else if angle < 3.0 * PI / 2.0 { 3 } else { 0 };
-        mesh.add_triangle(corners_top[corner_idx], circle_top[i], circle_top[next]);
-    }
-    // Fill corner triangles
-    mesh.add_triangle(corners_top[0], corners_top[1], circle_top[0]);
-    mesh.add_triangle(corners_top[1], corners_top[2], circle_top[SEGMENTS / 4]);
-    mesh.add_triangle(corners_top[2], corners_top[3], circle_top[SEGMENTS / 2]);
-    mesh.add_triangle(corners_top[3], corners_top[0], circle_top[3 * SEGMENTS / 4]);
-
-    // Bottom face with hole (z=0)
-    let corners_bot = [
-        mesh.add_vertex([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]),
-        mesh.add_vertex([w, 0.0, 0.0], [0.0, 0.0, -1.0]),
-        mesh.add_vertex([w, d, 0.0], [0.0, 0.0, -1.0]),
-        mesh.add_vertex([0.0, d, 0.0], [0.0, 0.0, -1.0]),
-    ];
-    let mut circle_bot = Vec::new();
-    for i in 0..SEGMENTS {
-        let angle = (i as f32 / SEGMENTS as f32) * 2.0 * PI;
-        circle_bot.push(mesh.add_vertex(
-            [cx + hole_r * angle.cos(), cy + hole_r * angle.sin(), 0.0],
-            [0.0, 0.0, -1.0],
-        ));
-    }
-    for i in 0..SEGMENTS {
-        let next = (i + 1) % SEGMENTS;
-        let angle = (i as f32 + 0.5) / SEGMENTS as f32 * 2.0 * PI;
-        let corner_idx = if angle < PI / 2.0 { 1 } else if angle < PI { 2 } else if angle < 3.0 * PI / 2.0 { 3 } else { 0 };
-        mesh.add_triangle(corners_bot[corner_idx], circle_bot[next], circle_bot[i]);
-    }
-    mesh.add_triangle(corners_bot[0], circle_bot[0], corners_bot[1]);
-    mesh.add_triangle(corners_bot[1], circle_bot[SEGMENTS / 4], corners_bot[2]);
-    mesh.add_triangle(corners_bot[2], circle_bot[SEGMENTS / 2], corners_bot[3]);
-    mesh.add_triangle(corners_bot[3], circle_bot[3 * SEGMENTS / 4], corners_bot[0]);
-
-    mesh
-}
-
-fn procedural_sphere(radius: f32) -> MeshData {
-    let mut mesh = MeshData::new();
-    let stacks = 32usize;
-    let slices = 64usize;
-
-    let mut verts: Vec<Vec<u32>> = Vec::new();
-
-    for i in 0..=stacks {
-        let phi = PI * (i as f32 / stacks as f32);
-        let z = radius * phi.cos();
-        let r = radius * phi.sin();
-
-        let mut ring = Vec::new();
-        for j in 0..=slices {
-            let theta = 2.0 * PI * (j as f32 / slices as f32);
-            let x = r * theta.cos();
-            let y = r * theta.sin();
-            let nx = phi.sin() * theta.cos();
-            let ny = phi.sin() * theta.sin();
-            let nz = phi.cos();
-            ring.push(mesh.add_vertex([x, y, z], [nx, ny, nz]));
+    // Extract positions (first 3 properties per vertex)
+    for i in 0..num_verts {
+        let base = i * num_props;
+        if base + 2 < properties.len() {
+            data.positions.push(properties[base]);
+            data.positions.push(properties[base + 1]);
+            data.positions.push(properties[base + 2]);
         }
-        verts.push(ring);
     }
 
-    for i in 0..stacks {
-        for j in 0..slices {
-            let (v0, v1, v2, v3) = (verts[i][j], verts[i][j + 1], verts[i + 1][j + 1], verts[i + 1][j]);
-            if i != 0 {
-                mesh.add_triangle(v0, v1, v2);
-            }
-            if i != stacks - 1 {
-                mesh.add_triangle(v0, v2, v3);
+    // Get actual triangle indices via FFI
+    let indices = get_mesh_indices(&mesh, index_count);
+    data.indices = indices;
+
+    // Initialize normals
+    data.normals = vec![0.0; num_verts * 3];
+    let mut counts = vec![0u32; num_verts];
+
+    // Compute normals per-face and average at vertices
+    for tri in 0..num_tris {
+        let base = tri * 3;
+        if base + 2 >= data.indices.len() {
+            continue;
+        }
+
+        let i0 = data.indices[base] as usize;
+        let i1 = data.indices[base + 1] as usize;
+        let i2 = data.indices[base + 2] as usize;
+
+        if i0 >= num_verts || i1 >= num_verts || i2 >= num_verts {
+            continue;
+        }
+
+        let v0 = [
+            data.positions[i0 * 3],
+            data.positions[i0 * 3 + 1],
+            data.positions[i0 * 3 + 2],
+        ];
+        let v1 = [
+            data.positions[i1 * 3],
+            data.positions[i1 * 3 + 1],
+            data.positions[i1 * 3 + 2],
+        ];
+        let v2 = [
+            data.positions[i2 * 3],
+            data.positions[i2 * 3 + 1],
+            data.positions[i2 * 3 + 2],
+        ];
+
+        let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let normal = cross(edge1, edge2);
+
+        for &idx in &[i0, i1, i2] {
+            data.normals[idx * 3] += normal[0];
+            data.normals[idx * 3 + 1] += normal[1];
+            data.normals[idx * 3 + 2] += normal[2];
+            counts[idx] += 1;
+        }
+    }
+
+    // Normalize the normals
+    for i in 0..num_verts {
+        if counts[i] > 0 {
+            let len = (data.normals[i * 3].powi(2)
+                + data.normals[i * 3 + 1].powi(2)
+                + data.normals[i * 3 + 2].powi(2))
+            .sqrt();
+            if len > 1e-10 {
+                data.normals[i * 3] /= len;
+                data.normals[i * 3 + 1] /= len;
+                data.normals[i * 3 + 2] /= len;
             }
         }
     }
 
-    mesh
+    // Default white color
+    data.colors = vec![1.0; num_verts * 3];
+
+    data
 }
 
-// ============================================================================
-// Transform application - operations applied in order
-// ============================================================================
-
-fn apply_translate(mesh: &mut MeshData, x: f32, y: f32, z: f32) {
-    for i in 0..mesh.positions.len() / 3 {
-        mesh.positions[i * 3] += x;
-        mesh.positions[i * 3 + 1] += y;
-        mesh.positions[i * 3 + 2] += z;
-    }
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
-fn apply_rotate(mesh: &mut MeshData, rx: f32, ry: f32, rz: f32) {
-    let rx = rx.to_radians();
-    let ry = ry.to_radians();
-    let rz = rz.to_radians();
-
-    let (sx, cx) = (rx.sin(), rx.cos());
-    let (sy, cy) = (ry.sin(), ry.cos());
-    let (sz, cz) = (rz.sin(), rz.cos());
-
-    // Combined rotation matrix (ZYX order)
-    let m00 = cy * cz;
-    let m01 = sx * sy * cz - cx * sz;
-    let m02 = cx * sy * cz + sx * sz;
-    let m10 = cy * sz;
-    let m11 = sx * sy * sz + cx * cz;
-    let m12 = cx * sy * sz - sx * cz;
-    let m20 = -sy;
-    let m21 = sx * cy;
-    let m22 = cx * cy;
-
-    for i in 0..mesh.positions.len() / 3 {
-        let x = mesh.positions[i * 3];
-        let y = mesh.positions[i * 3 + 1];
-        let z = mesh.positions[i * 3 + 2];
-
-        mesh.positions[i * 3] = m00 * x + m01 * y + m02 * z;
-        mesh.positions[i * 3 + 1] = m10 * x + m11 * y + m12 * z;
-        mesh.positions[i * 3 + 2] = m20 * x + m21 * y + m22 * z;
-
-        let nx = mesh.normals[i * 3];
-        let ny = mesh.normals[i * 3 + 1];
-        let nz = mesh.normals[i * 3 + 2];
-
-        mesh.normals[i * 3] = m00 * nx + m01 * ny + m02 * nz;
-        mesh.normals[i * 3 + 1] = m10 * nx + m11 * ny + m12 * nz;
-        mesh.normals[i * 3 + 2] = m20 * nx + m21 * ny + m22 * nz;
-    }
+fn pos(v: f64) -> PositiveF64 {
+    PositiveF64::new(v.abs().max(0.001)).unwrap()
 }
 
-fn apply_scale(mesh: &mut MeshData, sx: f32, sy: f32, sz: f32) {
-    for i in 0..mesh.positions.len() / 3 {
-        mesh.positions[i * 3] *= sx;
-        mesh.positions[i * 3 + 1] *= sy;
-        mesh.positions[i * 3 + 2] *= sz;
-    }
-}
-
-fn apply_ops(mesh: &mut MeshData, table: &mlua::Table) {
-    if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
-        for pair in ops.pairs::<i64, mlua::Table>() {
-            if let Ok((_, op_table)) = pair {
-                let op: String = op_table.get("op").unwrap_or_default();
-                let x: f32 = op_table.get("x").unwrap_or(0.0);
-                let y: f32 = op_table.get("y").unwrap_or(0.0);
-                let z: f32 = op_table.get("z").unwrap_or(0.0);
-
-                match op.as_str() {
-                    "translate" => apply_translate(mesh, x, y, z),
-                    "rotate" => apply_rotate(mesh, x, y, z),
-                    "scale" => apply_scale(mesh, x, y, z),
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Lua scene parsing
-// ============================================================================
-
-fn apply_material_color(mesh: &mut MeshData, table: &mlua::Table) {
-    if let Ok(material) = table.get::<_, mlua::Table>("material") {
-        if let Ok(color) = material.get::<_, mlua::Table>("color") {
-            let r: f32 = color.get(1).unwrap_or(1.0);
-            let g: f32 = color.get(2).unwrap_or(1.0);
-            let b: f32 = color.get(3).unwrap_or(1.0);
-            mesh.set_color(r, g, b);
-        }
-    }
-}
-
-/// Check if this is a cylinder-cylinder difference (tube) and handle it specially
-fn try_build_tube(table: &mlua::Table) -> Option<MeshData> {
-    let obj_type: String = table.get("type").ok()?;
-    if obj_type != "csg" {
-        return None;
-    }
-
-    let operation: String = table.get("operation").ok()?;
-    if operation != "difference" {
-        return None;
-    }
-
-    let children: mlua::Table = table.get("children").ok()?;
-    if children.len().ok()? != 2 {
-        return None;
-    }
-
-    let child1: mlua::Table = children.get(1).ok()?;
-    let child2: mlua::Table = children.get(2).ok()?;
-
-    let type1: String = child1.get("type").ok()?;
-    let type2: String = child2.get("type").ok()?;
-
-    if type1 != "cylinder" || type2 != "cylinder" {
-        return None;
-    }
-
-    let params1: mlua::Table = child1.get("params").ok()?;
-    let params2: mlua::Table = child2.get("params").ok()?;
-
-    let outer_r: f32 = params1.get("r").ok()?;
-    let outer_h: f32 = params1.get("h").ok()?;
-    let inner_r: f32 = params2.get("r").ok()?;
-    let inner_h: f32 = params2.get("h").ok()?;
-
-    // Only use tube optimization if inner cylinder goes all the way through
-    // (i.e., it's actually a tube, not a cup/lid shape)
-    if inner_h < outer_h {
-        return None;
-    }
-
-    let mut mesh = procedural_tube(outer_r, inner_r, outer_h);
-
-    // Apply ops and material from the CSG node
-    apply_ops(&mut mesh, table);
-    apply_material_color(&mut mesh, table);
-
-    Some(mesh)
-}
-
-/// Check if this is a box-cylinder difference (box with hole) and handle it specially
-fn try_build_box_with_hole(table: &mlua::Table) -> Option<MeshData> {
-    let obj_type: String = table.get("type").ok()?;
-    if obj_type != "csg" {
-        return None;
-    }
-
-    let operation: String = table.get("operation").ok()?;
-    if operation != "difference" {
-        return None;
-    }
-
-    let children: mlua::Table = table.get("children").ok()?;
-    if children.len().ok()? != 2 {
-        return None;
-    }
-
-    let child1: mlua::Table = children.get(1).ok()?;
-    let child2: mlua::Table = children.get(2).ok()?;
-
-    let type1: String = child1.get("type").ok()?;
-    let type2: String = child2.get("type").ok()?;
-
-    if type1 != "box" || type2 != "cylinder" {
-        return None;
-    }
-
-    let params1: mlua::Table = child1.get("params").ok()?;
-    let params2: mlua::Table = child2.get("params").ok()?;
-
-    let w: f32 = params1.get("w").ok()?;
-    let d: f32 = params1.get::<_, f32>("d").unwrap_or(w);
-    let h: f32 = params1.get("h").ok()?;
-    let hole_r: f32 = params2.get("r").ok()?;
-    let hole_h: f32 = params2.get("h").ok()?;
-
-    // Only use if hole goes all the way through
-    if hole_h < h {
-        return None;
-    }
-
-    // Check if box is centered (has centerXY ops)
-    let box_ops: mlua::Table = child1.get("ops").ok()?;
-    let mut is_centered = false;
-    for pair in box_ops.pairs::<i64, mlua::Table>() {
-        if let Ok((_, op)) = pair {
-            let op_name: String = op.get("op").unwrap_or_default();
-            if op_name == "translate" {
-                let tx: f32 = op.get("x").unwrap_or(0.0);
-                let ty: f32 = op.get("y").unwrap_or(0.0);
-                // Check if centered (translated by -w/2, -d/2)
-                if (tx + w / 2.0).abs() < 0.01 && (ty + d / 2.0).abs() < 0.01 {
-                    is_centered = true;
-                }
-            }
-        }
-    }
-
-    if !is_centered {
-        return None;
-    }
-
-    let mut mesh = procedural_box_with_hole(w, d, h, hole_r);
-
-    // Shift back to centered position
-    apply_translate(&mut mesh, -w / 2.0, -d / 2.0, 0.0);
-
-    // Apply ops from the CSG node
-    apply_ops(&mut mesh, table);
-    apply_material_color(&mut mesh, table);
-
-    Some(mesh)
-}
-
-/// Build mesh from a serialized object
-fn build_object(table: &mlua::Table) -> Result<MeshData> {
-    let obj_type: String = table.get("type")?;
-
-    // Try special case: box-cylinder difference = box with hole
-    if let Some(box_hole) = try_build_box_with_hole(table) {
-        return Ok(box_hole);
-    }
-
-    // Try special case: cylinder-cylinder difference = tube
-    if let Some(tube) = try_build_tube(table) {
-        return Ok(tube);
-    }
-
-    if obj_type == "csg" {
-        // Generic CSG - use csgrs (may have artifacts)
-        let operation: String = table.get("operation")?;
-        let children: mlua::Table = table.get("children")?;
-
-        let first_child: mlua::Table = children.get(1)?;
-        let mut result = build_csg_mesh(&first_child)?;
-
-        for i in 2..=children.len()? {
-            let child: mlua::Table = children.get(i)?;
-            let child_mesh = build_csg_mesh(&child)?;
-
-            result = match operation.as_str() {
-                "union" => result.union(&child_mesh),
-                "difference" => result.difference(&child_mesh),
-                "intersect" => result.intersection(&child_mesh),
-                _ => return Err(anyhow!("Unknown CSG operation: {}", operation)),
-            };
-        }
-
-        let mut mesh = csg_mesh_to_data(&result);
-        apply_ops(&mut mesh, table);
-        apply_material_color(&mut mesh, table);
-        Ok(mesh)
-    } else if obj_type == "group" {
-        // Group - merge all children
-        let children: mlua::Table = table.get("children")?;
-        let mut combined = MeshData::new();
-
-        for pair in children.pairs::<i64, mlua::Table>() {
-            let (_, child) = pair?;
-            let child_mesh = build_object(&child)?;
-            combined.merge(&child_mesh);
-        }
-
-        apply_ops(&mut combined, table);
-        apply_material_color(&mut combined, table);
-        Ok(combined)
-    } else {
-        // Primitive - use procedural generation
-        let params: mlua::Table = table.get("params")?;
-        let mut mesh = build_primitive(&obj_type, &params)?;
-        apply_ops(&mut mesh, table);
-        apply_material_color(&mut mesh, table);
-        Ok(mesh)
-    }
-}
-
-fn build_primitive(obj_type: &str, params: &mlua::Table) -> Result<MeshData> {
+fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segments: u32) -> Result<Manifold> {
     match obj_type {
         "cylinder" => {
-            let r: f32 = params.get("r")?;
-            let h: f32 = params.get("h")?;
-            Ok(procedural_cylinder(r, h))
+            let r: f64 = params.get("r")?;
+            let h: f64 = params.get("h")?;
+            // origin_at_center = false: base at z=0, extends to z=h
+            Ok(Manifold::new_cylinder(
+                pos(h),
+                pos(r),
+                None::<PositiveF64>,
+                Some(manifold3d::types::PositiveI32::new(circular_segments as i32).unwrap()),
+                false,
+            ))
         }
         "box" => {
-            let w: f32 = params.get("w")?;
-            let d: f32 = params.get::<_, f32>("d").unwrap_or(w);
-            let h: f32 = params.get("h")?;
-            Ok(procedural_box(w, d, h))
+            let w: f64 = params.get("w")?;
+            let d: f64 = params.get::<_, f64>("d").unwrap_or(w);
+            let h: f64 = params.get("h")?;
+            // origin_at_center = false: corner at origin, extends to (w, d, h)
+            Ok(Manifold::new_cuboid(pos(w), pos(d), pos(h), false))
         }
         "sphere" => {
-            let r: f32 = params.get("r")?;
-            Ok(procedural_sphere(r))
+            let r: f64 = params.get("r")?;
+            // Spheres are always centered at origin
+            Ok(Manifold::new_sphere(
+                pos(r),
+                None::<manifold3d::types::PositiveI32>,
+            ))
         }
         "cube" => {
-            let size: f32 = params.get("size").unwrap_or(1.0);
-            Ok(procedural_box(size, size, size))
+            let size: f64 = params.get("size").unwrap_or(1.0);
+            Ok(Manifold::new_cuboid(pos(size), pos(size), pos(size), false))
         }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }
 }
 
-// ============================================================================
-// CSG mesh conversion (fallback using csgrs)
-// ============================================================================
+fn apply_manifold_ops(manifold: Manifold, table: &mlua::Table) -> Result<Manifold> {
+    let mut result = manifold;
 
-fn build_csg_mesh(table: &mlua::Table) -> Result<CsgMesh<()>> {
-    let obj_type: String = table.get("type")?;
-
-    let mut mesh = match obj_type.as_str() {
-        "cylinder" => {
-            let params: mlua::Table = table.get("params")?;
-            let r: f64 = params.get("r")?;
-            let h: f64 = params.get("h")?;
-            CsgMesh::cylinder(r, h, SEGMENTS, None)
-        }
-        "box" => {
-            let params: mlua::Table = table.get("params")?;
-            let w: f64 = params.get("w")?;
-            let d: f64 = params.get::<_, f64>("d").unwrap_or(w);
-            let h: f64 = params.get("h")?;
-            CsgMesh::cuboid(w, d, h, None)
-        }
-        "sphere" => {
-            let params: mlua::Table = table.get("params")?;
-            let r: f64 = params.get("r")?;
-            CsgMesh::sphere(r, SEGMENTS, SEGMENTS / 2, None)
-        }
-        _ => return Err(anyhow!("Unsupported CSG primitive: {}", obj_type)),
-    };
-
-    // Apply ops in order
     if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
         for pair in ops.pairs::<i64, mlua::Table>() {
             if let Ok((_, op_table)) = pair {
@@ -740,92 +228,298 @@ fn build_csg_mesh(table: &mlua::Table) -> Result<CsgMesh<()>> {
                 let y: f64 = op_table.get("y").unwrap_or(0.0);
                 let z: f64 = op_table.get("z").unwrap_or(0.0);
 
-                match op.as_str() {
-                    "translate" => {
-                        mesh = mesh.translate(x, y, z);
-                    }
+                tracing::debug!("Applying op: {} ({}, {}, {})", op, x, y, z);
+
+                result = match op.as_str() {
+                    "translate" => result.translate(Vec3::new(x, y, z)),
                     "rotate" => {
-                        mesh = mesh.rotate(x, y, z);
+                        // Build rotation matrix from ZYX Euler angles (degrees)
+                        let rx = x.to_radians();
+                        let ry = y.to_radians();
+                        let rz = z.to_radians();
+
+                        let (sx, cx) = (rx.sin(), rx.cos());
+                        let (sy, cy) = (ry.sin(), ry.cos());
+                        let (sz, cz) = (rz.sin(), rz.cos());
+
+                        // ZYX rotation matrix
+                        let m00 = cy * cz;
+                        let m01 = sx * sy * cz - cx * sz;
+                        let m02 = cx * sy * cz + sx * sz;
+                        let m10 = cy * sz;
+                        let m11 = sx * sy * sz + cx * cz;
+                        let m12 = cx * sy * sz - sx * cz;
+                        let m20 = -sy;
+                        let m21 = sx * cy;
+                        let m22 = cx * cy;
+
+                        let matrix = Matrix4x3::new([
+                            Vec3::new(m00, m01, m02),
+                            Vec3::new(m10, m11, m12),
+                            Vec3::new(m20, m21, m22),
+                            Vec3::new(0.0, 0.0, 0.0), // no translation
+                        ]);
+                        result.transform(matrix)
                     }
-                    "scale" => {
-                        mesh = mesh.scale(x, y, z);
-                    }
-                    _ => {}
-                }
+                    "scale" => result.scale(Vec3::new(x, y, z)),
+                    _ => result,
+                };
             }
         }
     }
 
-    Ok(mesh)
+    Ok(result)
 }
 
-fn csg_mesh_to_data(mesh: &CsgMesh<()>) -> MeshData {
-    let triangulated = mesh.triangulate();
-    let mut data = MeshData::new();
-    let mut vertex_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+fn build_manifold_object(table: &mlua::Table, circular_segments: u32) -> Result<Manifold> {
+    let obj_type: String = table.get("type")?;
+    let name: String = table.get("name").unwrap_or_default();
+    tracing::debug!("Building manifold object: type={}, name={}", obj_type, name);
 
-    for poly in &triangulated.polygons {
-        let verts = &poly.vertices;
-        if verts.len() != 3 {
-            continue;
-        }
+    if obj_type == "csg" {
+        let operation: String = table.get("operation")?;
+        let children: mlua::Table = table.get("children")?;
 
-        let mut tri_indices = [0u32; 3];
+        let first_child: mlua::Table = children.get(1)?;
+        let mut result = build_manifold_object(&first_child, circular_segments)?;
 
-        for (i, v) in verts.iter().enumerate() {
-            let pos = &v.pos;
-            let normal = &v.normal;
-
-            let key = format!(
-                "{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
-                pos.x, pos.y, pos.z, normal.x, normal.y, normal.z
-            );
-
-            let idx = if let Some(&existing) = vertex_map.get(&key) {
-                existing
-            } else {
-                let idx = (data.positions.len() / 3) as u32;
-                data.positions.push(pos.x as f32);
-                data.positions.push(pos.y as f32);
-                data.positions.push(pos.z as f32);
-                data.normals.push(normal.x as f32);
-                data.normals.push(normal.y as f32);
-                data.normals.push(normal.z as f32);
-                data.colors.push(1.0);
-                data.colors.push(1.0);
-                data.colors.push(1.0);
-                vertex_map.insert(key, idx);
-                idx
+        for i in 2..=children.len()? {
+            let child: mlua::Table = children.get(i)?;
+            let child_manifold = build_manifold_object(&child, circular_segments)?;
+            result = match operation.as_str() {
+                "union" => result.union(&child_manifold),
+                "difference" => result.difference(&child_manifold),
+                "intersect" => result.intersection(&child_manifold),
+                _ => return Err(anyhow!("Unknown CSG operation: {}", operation)),
             };
-
-            tri_indices[i] = idx;
         }
 
-        data.indices.push(tri_indices[0]);
-        data.indices.push(tri_indices[1]);
-        data.indices.push(tri_indices[2]);
+        apply_manifold_ops(result, table)
+    } else if obj_type == "group" {
+        let children: mlua::Table = table.get("children")?;
+        let mut result: Option<Manifold> = None;
+
+        for pair in children.pairs::<i64, mlua::Table>() {
+            let (_, child) = pair?;
+            let child_manifold = build_manifold_object(&child, circular_segments)?;
+            result = Some(match result {
+                Some(r) => r.union(&child_manifold),
+                None => child_manifold,
+            });
+        }
+
+        let manifold = result.ok_or_else(|| anyhow!("Empty group"))?;
+        apply_manifold_ops(manifold, table)
+    } else {
+        let params: mlua::Table = table.get("params")?;
+        let manifold = build_manifold_primitive(&obj_type, &params, circular_segments)?;
+        apply_manifold_ops(manifold, table)
+    }
+}
+
+fn get_material_color(table: &mlua::Table) -> Option<(f32, f32, f32)> {
+    // Check direct color field first
+    if let Ok(color) = table.get::<_, mlua::Table>("color") {
+        let r: f32 = color.get(1).unwrap_or(1.0);
+        let g: f32 = color.get(2).unwrap_or(1.0);
+        let b: f32 = color.get(3).unwrap_or(1.0);
+        return Some((r, g, b));
+    }
+    // Fall back to material color
+    if let Ok(material) = table.get::<_, mlua::Table>("material") {
+        if let Ok(color) = material.get::<_, mlua::Table>("color") {
+            let r: f32 = color.get(1).unwrap_or(1.0);
+            let g: f32 = color.get(2).unwrap_or(1.0);
+            let b: f32 = color.get(3).unwrap_or(1.0);
+            return Some((r, g, b));
+        }
+    }
+    None
+}
+
+fn apply_color_to_mesh(mesh: &mut MeshData, r: f32, g: f32, b: f32) {
+    for i in 0..mesh.colors.len() / 3 {
+        mesh.colors[i * 3] = r;
+        mesh.colors[i * 3 + 1] = g;
+        mesh.colors[i * 3 + 2] = b;
+    }
+}
+
+fn combine_meshes(meshes: Vec<MeshData>) -> MeshData {
+    let mut combined = MeshData {
+        positions: Vec::new(),
+        normals: Vec::new(),
+        indices: Vec::new(),
+        colors: Vec::new(),
+    };
+
+    for mesh in meshes {
+        let vertex_offset = (combined.positions.len() / 3) as u32;
+        combined.positions.extend(&mesh.positions);
+        combined.normals.extend(&mesh.normals);
+        combined.colors.extend(&mesh.colors);
+        combined.indices.extend(mesh.indices.iter().map(|i| i + vertex_offset));
     }
 
-    data
+    combined
 }
 
-/// Generate mesh from Lua scene (all objects combined)
-pub fn generate_mesh_from_lua(_lua: &Lua, value: &Value) -> Result<MeshData> {
+/// Recursively build mesh preserving per-object colors
+fn build_mesh_recursive(table: &mlua::Table, circular_segments: u32) -> Result<MeshData> {
+    let obj_type: String = table.get("type")?;
+
+    if obj_type == "group" {
+        let children: mlua::Table = table.get("children")?;
+        let mut child_meshes = Vec::new();
+
+        for pair in children.pairs::<i64, mlua::Table>() {
+            let (_, child) = pair?;
+            let child_mesh = build_mesh_recursive(&child, circular_segments)?;
+            child_meshes.push(child_mesh);
+        }
+
+        let mut combined = if child_meshes.is_empty() {
+            return Err(anyhow!("Empty group"));
+        } else {
+            combine_meshes(child_meshes)
+        };
+
+        // Apply group-level material if present (overrides children)
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut combined, r, g, b);
+        }
+
+        // Apply group-level transforms
+        if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
+            apply_mesh_transforms(&mut combined, &ops)?;
+        }
+
+        Ok(combined)
+    } else if obj_type == "csg" {
+        // For CSG, we need to use Manifold for correct boolean operations
+        let manifold = build_manifold_object(table, circular_segments)?;
+        let mut mesh = manifold_to_mesh_data(&manifold);
+
+        // Try to get color from result, then from first child
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut mesh, r, g, b);
+        } else if let Ok(children) = table.get::<_, mlua::Table>("children") {
+            if let Ok(first_child) = children.get::<_, mlua::Table>(1) {
+                if let Some((r, g, b)) = get_material_color(&first_child) {
+                    apply_color_to_mesh(&mut mesh, r, g, b);
+                }
+            }
+        }
+
+        Ok(mesh)
+    } else {
+        // Primitive
+        let params: mlua::Table = table.get("params")?;
+        let manifold = build_manifold_primitive(&obj_type, &params, circular_segments)?;
+        let manifold = apply_manifold_ops(manifold, table)?;
+        let mut mesh = manifold_to_mesh_data(&manifold);
+
+        if let Some((r, g, b)) = get_material_color(table) {
+            apply_color_to_mesh(&mut mesh, r, g, b);
+        }
+
+        Ok(mesh)
+    }
+}
+
+fn apply_mesh_transforms(mesh: &mut MeshData, ops: &mlua::Table) -> Result<()> {
+    for pair in ops.clone().pairs::<i64, mlua::Table>() {
+        if let Ok((_, op_table)) = pair {
+            let op: String = op_table.get("op").unwrap_or_default();
+            let x: f64 = op_table.get("x").unwrap_or(0.0);
+            let y: f64 = op_table.get("y").unwrap_or(0.0);
+            let z: f64 = op_table.get("z").unwrap_or(0.0);
+
+            match op.as_str() {
+                "translate" => {
+                    for i in 0..mesh.positions.len() / 3 {
+                        mesh.positions[i * 3] += x as f32;
+                        mesh.positions[i * 3 + 1] += y as f32;
+                        mesh.positions[i * 3 + 2] += z as f32;
+                    }
+                }
+                "rotate" => {
+                    let rx = x.to_radians();
+                    let ry = y.to_radians();
+                    let rz = z.to_radians();
+
+                    let (sx, cx) = (rx.sin() as f32, rx.cos() as f32);
+                    let (sy, cy) = (ry.sin() as f32, ry.cos() as f32);
+                    let (sz, cz) = (rz.sin() as f32, rz.cos() as f32);
+
+                    let m00 = cy * cz;
+                    let m01 = sx * sy * cz - cx * sz;
+                    let m02 = cx * sy * cz + sx * sz;
+                    let m10 = cy * sz;
+                    let m11 = sx * sy * sz + cx * cz;
+                    let m12 = cx * sy * sz - sx * cz;
+                    let m20 = -sy;
+                    let m21 = sx * cy;
+                    let m22 = cx * cy;
+
+                    for i in 0..mesh.positions.len() / 3 {
+                        let px = mesh.positions[i * 3];
+                        let py = mesh.positions[i * 3 + 1];
+                        let pz = mesh.positions[i * 3 + 2];
+
+                        mesh.positions[i * 3] = m00 * px + m01 * py + m02 * pz;
+                        mesh.positions[i * 3 + 1] = m10 * px + m11 * py + m12 * pz;
+                        mesh.positions[i * 3 + 2] = m20 * px + m21 * py + m22 * pz;
+
+                        let nx = mesh.normals[i * 3];
+                        let ny = mesh.normals[i * 3 + 1];
+                        let nz = mesh.normals[i * 3 + 2];
+
+                        mesh.normals[i * 3] = m00 * nx + m01 * ny + m02 * nz;
+                        mesh.normals[i * 3 + 1] = m10 * nx + m11 * ny + m12 * nz;
+                        mesh.normals[i * 3 + 2] = m20 * nx + m21 * ny + m22 * nz;
+                    }
+                }
+                "scale" => {
+                    for i in 0..mesh.positions.len() / 3 {
+                        mesh.positions[i * 3] *= x as f32;
+                        mesh.positions[i * 3 + 1] *= y as f32;
+                        mesh.positions[i * 3 + 2] *= z as f32;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build mesh from a serialized object using Manifold
+pub fn build_object_manifold(table: &mlua::Table, circular_segments: u32) -> Result<MeshData> {
+    build_mesh_recursive(table, circular_segments)
+}
+
+/// Generate mesh from Lua scene using Manifold backend
+pub fn generate_mesh_from_lua_manifold(_lua: &Lua, value: &Value, circular_segments: u32) -> Result<MeshData> {
     let table = value.as_table().ok_or_else(|| anyhow!("Expected table"))?;
     let objects: mlua::Table = table.get("objects")?;
 
-    let mut combined = MeshData::new();
+    let mut meshes = Vec::new();
 
     for pair in objects.pairs::<i64, mlua::Table>() {
         let (_, obj) = pair?;
-        let mesh = build_object(&obj)?;
-        combined.merge(&mesh);
+        let mesh = build_mesh_recursive(&obj, circular_segments)?;
+        meshes.push(mesh);
     }
 
-    Ok(combined)
+    if meshes.is_empty() {
+        return Err(anyhow!("No objects in scene"));
+    }
+
+    Ok(combine_meshes(meshes))
 }
 
-/// Generate mesh from a single serialized object
-pub fn generate_mesh_from_object(_lua: &Lua, table: &mlua::Table) -> Result<MeshData> {
-    build_object(table)
+/// Generate mesh from a single serialized object using Manifold
+pub fn generate_mesh_from_object_manifold(_lua: &Lua, table: &mlua::Table, circular_segments: u32) -> Result<MeshData> {
+    build_object_manifold(table, circular_segments)
 }

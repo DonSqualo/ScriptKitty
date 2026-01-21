@@ -20,7 +20,7 @@ Wire.pitch = Wire.diameter / Wire.packing_factor
 
 Coil = {
   mean_radius = 50,
-  gap = 40,
+  gap = 29,
   windings = 120,
   layers = 12,
   current = 2.0,
@@ -155,20 +155,31 @@ local scaffold_tube = difference(
 )
 
 local stopper_length = Coil.width + 2 * Scaffold.stopper_width
+local coil_cutout_scale = 1.02
+
+local coil_cutout_right = difference(
+  cylinder(Coil.outer_radius, Coil.width):centered(),
+  cylinder(Coil.inner_radius, Coil.width + 1):centered()
+):scale(coil_cutout_scale):rotate(0, 90, 0):at(Coil.right_x, 0, 0)
+
+local coil_cutout_left = difference(
+  cylinder(Coil.outer_radius, Coil.width):centered(),
+  cylinder(Coil.inner_radius, Coil.width + 1):centered()
+):scale(coil_cutout_scale):rotate(0, 90, 0):at(Coil.left_x, 0, 0)
 
 local stopper_right_base = difference(
   cylinder(Scaffold.stopper_radius, stopper_length):centered(),
   cylinder(Scaffold.tube_radius, stopper_length + 1):centered()
 ):rotate(0, 90, 0):at(Coil.right_x, 0, 0)
 
-local stopper_right = difference(stopper_right_base, RightCoil.body):at(0, 0, 0)
+local stopper_right = difference(stopper_right_base, coil_cutout_right)
 
 local stopper_left_base = difference(
   cylinder(Scaffold.stopper_radius, stopper_length):centered(),
   cylinder(Scaffold.tube_radius, stopper_length + 1):centered()
 ):rotate(0, 90, 0):at(Coil.left_x, 0, 0)
 
-local stopper_left = difference(stopper_left_base, LeftCoil.body)
+local stopper_left = difference(stopper_left_base, coil_cutout_left)
 
 local resonator_box = box(Coil.gap, Scaffold.box_length, Scaffold.box_height * 2)
     :center(true, true, true)

@@ -28,6 +28,12 @@ do not use comments such as
 divide things simply by a line if you have to 
 -- ===========================
 
+## Documentation
+- When authoring documentation (Rust doc comments, Lua stdlib docs, spec files), capture WHY tests and the backing implementation are important - not just what they do
+- Document the real-world purpose: what physical device does this simulate? What measurement does this enable?
+- Link API declarations to their backend implementation status (see specs/implementation_status.md)
+- No aspirational documentation - if a feature isn't implemented, say so explicitly
+
 ## Editing frontend code
 The frontend is a minimal website/Tauri webview using latest, but widely supported rendering features, leveraging the extensive optimization of modern browser. 
 - Code should be kept to the absolute minimum
@@ -39,6 +45,10 @@ All the physics should be based of real devices and in seperate code compartment
 - Keep physics simulations seperate from each other
 - If code is edited that could affect other experimental design simulations, ask first
 - NEVER make changes to the geometry engine or core rendering pipeline without first committing the current working code to git
+
+## Learning and Bug Tracking
+- When you learn something new about how to run the compiler or examples, update AGENT.md using a subagent but keep it brief. For example if you run commands multiple times before learning the correct command then that file should be updated.
+- For any bugs you notice, resolve them or document them in implementation_plan.md using a subagent even if unrelated to the current piece of work.
 
 ## ScriptKitten
 

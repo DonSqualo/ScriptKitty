@@ -30,6 +30,7 @@ View._state = {
   },
   render = {
     flat_shading = false,
+    circular_segments = 32,
   }
 }
 
@@ -138,9 +139,12 @@ function View.view(config)
     end
   end
 
-  -- Top-level flat_shading shortcut
+  -- Top-level shortcuts
   if config.flat_shading ~= nil then
     View._state.render.flat_shading = config.flat_shading
+  end
+  if config.circular_segments ~= nil then
+    View._state.render.circular_segments = config.circular_segments
   end
 
   return View._state
@@ -249,6 +253,7 @@ end
 function View.serialize()
   return {
     flat_shading = View._state.render.flat_shading,
+    circular_segments = View._state.render.circular_segments,
   }
 end
 
@@ -279,7 +284,7 @@ function View.reset()
     theme = "dark",
     grid = {show = true, size = 100, divisions = 10},
     axes = {show = true, size = 20},
-    render = {quality = "high", shadows = true, ambient_occlusion = true, anti_aliasing = true}
+    render = {flat_shading = false, circular_segments = 32}
   }
 end
 

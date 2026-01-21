@@ -2,6 +2,9 @@
 
 A script-first CAD system with multiphysics simulation capabilities for designing ultrasound and MRI components. OpenSCAD-inspired Lua scripting with real-time preview.
 
+
+{ cat PROMPTx1.md; echo ""; } | cc
+
 ## Running
 
 ```bash
