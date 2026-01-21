@@ -13,10 +13,12 @@ ScriptCAD.instruments = require("stdlib.instruments")
 ScriptCAD.physics = require("stdlib.physics")
 ScriptCAD.view = require("stdlib.view")
 ScriptCAD.export = require("stdlib.export")
+ScriptCAD.circuits = require("stdlib.circuits")
 
 -- Export primitive functions to global scope
 box = ScriptCAD.primitives.box
 cylinder = ScriptCAD.primitives.cylinder
+sphere = ScriptCAD.primitives.sphere
 
 -- Export transform functions
 translate = ScriptCAD.transforms.translate
@@ -57,10 +59,19 @@ logspace = ScriptCAD.physics.logspace
 Probe = ScriptCAD.instruments.Probe
 GaussMeter = ScriptCAD.instruments.GaussMeter
 MagneticFieldPlane = ScriptCAD.instruments.MagneticFieldPlane
+AcousticPressurePlane = ScriptCAD.instruments.AcousticPressurePlane
+Hydrophone = ScriptCAD.instruments.Hydrophone
 
 -- Export file functions
 export_stl = ScriptCAD.export.export_stl
 export_3mf = ScriptCAD.export.export_3mf
+
+-- Export circuit functions
+SignalGenerator = ScriptCAD.circuits.SignalGenerator
+Amplifier = ScriptCAD.circuits.Amplifier
+MatchingNetwork = ScriptCAD.circuits.MatchingNetwork
+TransducerLoad = ScriptCAD.circuits.TransducerLoad
+Circuit = ScriptCAD.circuits.Circuit
 
 
 -- Scene registry

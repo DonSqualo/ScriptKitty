@@ -91,23 +91,56 @@ function Instruments.GaussMeter(position, config)
 end
 
 --- Magnetic field plane visualization
--- Backend: field.rs generates colormap and arrow data for XZ plane
--- Limitation: Only XZ plane at Y=0 is implemented
--- @param plane "XZ" (only supported value)
--- @param offset Distance from origin (ignored, always Y=0)
+-- Backend: field.rs generates colormap and arrow data
+-- @param plane "XZ", "XY", or "YZ"
+-- @param offset Distance from origin along plane normal (mm)
 -- @param config {quantity, style, resolution, color_map}
 -- @return MagneticFieldPlane instrument
 function Instruments.MagneticFieldPlane(plane, offset, config)
   config = config or {}
   local field_plane = Instrument("field_plane", {0, 0, 0}, {
-    plane = "XZ",
-    offset = 0,
+    plane = plane or "XZ",
+    offset = offset or 0,
     quantity = config.quantity or "B",
     style = config.style or "arrows",
     resolution = config.resolution or 20,
-    color_map = "jet",
+    color_map = config.color_map or "jet",
   })
   return field_plane
+end
+
+--- Acoustic pressure field plane visualization
+-- Backend: acoustic.rs computes Rayleigh-Sommerfeld pressure field
+-- Pattern-matched by Acoustic/Transducer/Medium globals
+-- @param plane "XZ", "XY", or "YZ"
+-- @param offset Distance from origin along plane normal (mm)
+-- @param config {style, resolution, color_map}
+-- @return AcousticPressurePlane instrument
+function Instruments.AcousticPressurePlane(plane, offset, config)
+  config = config or {}
+  local field_plane = Instrument("acoustic_pressure_plane", {0, 0, 0}, {
+    plane = plane or "XZ",
+    offset = offset or 0,
+    quantity = "pressure",
+    style = config.style or "colormap",
+    resolution = config.resolution or 80,
+    color_map = config.color_map or "jet",
+  })
+  return field_plane
+end
+
+--- Hydrophone probe for acoustic pressure measurement at a point
+-- Backend: acoustic.rs computes pressure at probe location
+-- @param position {x, y, z} position in mm
+-- @param config {range, label}
+-- @return Hydrophone instrument
+function Instruments.Hydrophone(position, config)
+  config = config or {}
+  local probe = Instrument("hydrophone", position, {
+    range = config.range or "kPa",
+    label = config.label,
+  })
+  return probe
 end
 
 --- Get all active instruments
@@ -133,5 +166,7 @@ end
 Probe = Instruments.Probe
 GaussMeter = Instruments.GaussMeter
 MagneticFieldPlane = Instruments.MagneticFieldPlane
+AcousticPressurePlane = Instruments.AcousticPressurePlane
+Hydrophone = Instruments.Hydrophone
 
 return Instruments

@@ -261,3 +261,228 @@ pub fn generate_circuit_svg(components: &[CircuitComponent], width: f64, height:
         svg: full_svg,
     }
 }
+
+// ===========================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_value_millis() {
+        assert_eq!(format_value(0.001, "H"), "1.0mH");
+        assert_eq!(format_value(0.0025, "F"), "2.5mF");
+    }
+
+    #[test]
+    fn test_format_value_micros() {
+        assert_eq!(format_value(0.000001, "H"), "1.0uH");
+        assert_eq!(format_value(0.0000047, "F"), "4.7uF");
+    }
+
+    #[test]
+    fn test_format_value_nanos() {
+        assert_eq!(format_value(0.000000001, "H"), "1.0nH");
+        assert_eq!(format_value(0.00000001, "F"), "10.0nF");
+    }
+
+    #[test]
+    fn test_format_value_picos() {
+        assert_eq!(format_value(0.000000000001, "F"), "1.0pF");
+        assert_eq!(format_value(0.00000000022, "F"), "220.0pF");
+    }
+
+    #[test]
+    fn test_signal_generator_creates_circle_with_sine() {
+        let (svg, input_x, output_x) = draw_signal_generator(100.0, 50.0, 1e6);
+
+        assert!(svg.contains("<circle"), "SignalGenerator should contain circle");
+        assert!(svg.contains("r=\"15\""), "Circle should have radius 15");
+        assert!(svg.contains("<polyline"), "SignalGenerator should contain sine wave polyline");
+        assert!(svg.contains("1.0MHz"), "Should display frequency label");
+        assert!((input_x - 100.0).abs() < 1e-6, "Input should be at x position");
+        assert!((output_x - 130.0).abs() < 1e-6, "Output should be at x + 2*radius");
+    }
+
+    #[test]
+    fn test_signal_generator_frequency_labels() {
+        let (svg_mhz, _, _) = draw_signal_generator(0.0, 0.0, 2.5e6);
+        assert!(svg_mhz.contains("2.5MHz"), "Should format MHz correctly");
+
+        let (svg_khz, _, _) = draw_signal_generator(0.0, 0.0, 500e3);
+        assert!(svg_khz.contains("500.0kHz"), "Should format kHz correctly");
+
+        let (svg_hz, _, _) = draw_signal_generator(0.0, 0.0, 60.0);
+        assert!(svg_hz.contains("60.0Hz"), "Should format Hz correctly");
+    }
+
+    #[test]
+    fn test_amplifier_creates_triangle() {
+        let (svg, input_x, output_x) = draw_amplifier(100.0, 50.0, 10.0);
+
+        assert!(svg.contains("<polygon"), "Amplifier should contain polygon (triangle)");
+        assert!(svg.contains("points=\""), "Polygon should have points attribute");
+        assert!(svg.contains("x10"), "Should display gain label");
+        assert!((input_x - 100.0).abs() < 1e-6, "Input should be at x position");
+        assert!((output_x - 130.0).abs() < 1e-6, "Output should be at x + width (30)");
+    }
+
+    #[test]
+    fn test_amplifier_triangle_points() {
+        let x = 50.0;
+        let y = 100.0;
+        let (svg, _, _) = draw_amplifier(x, y, 5.0);
+
+        let h = 24.0;
+        let w = 30.0;
+        let expected_top = format!("{},{}", x, y - h / 2.0);
+        let expected_tip = format!("{},{}", x + w, y);
+        let expected_bottom = format!("{},{}", x, y + h / 2.0);
+
+        assert!(svg.contains(&expected_top), "Triangle should have top vertex");
+        assert!(svg.contains(&expected_tip), "Triangle should have tip vertex");
+        assert!(svg.contains(&expected_bottom), "Triangle should have bottom vertex");
+    }
+
+    #[test]
+    fn test_matching_network_creates_l_network() {
+        let (svg, input_x, output_x) = draw_matching_network(100.0, 50.0, 150.0, 50.0, 100.0, 1e6);
+
+        assert!(svg.contains("<path"), "MatchingNetwork should contain inductor coils (path elements)");
+        assert!(svg.contains("a 3.5,3"), "Inductor should use arc paths for coils");
+        assert!(svg.contains("stroke-width=\"2\""), "Capacitor plates should have stroke-width 2");
+        assert!((input_x - 100.0).abs() < 1e-6, "Input should be at x position");
+        assert!((output_x - 145.0).abs() < 1e-6, "Output should be at x + inductor_w + 15");
+    }
+
+    #[test]
+    fn test_matching_network_computes_l_value() {
+        let frequency = 1e6;
+        let impedance_imag = 100.0;
+        let omega = 2.0 * PI * frequency;
+        let expected_l = impedance_imag / omega;
+
+        let (svg, _, _) = draw_matching_network(0.0, 50.0, 150.0, 50.0, impedance_imag, frequency);
+
+        let l_label = format_value(expected_l, "H");
+        assert!(svg.contains(&l_label), "Should display computed inductance value: {}", l_label);
+    }
+
+    #[test]
+    fn test_matching_network_computes_c_value() {
+        let frequency = 1e6;
+        let impedance_real = 50.0;
+        let omega = 2.0 * PI * frequency;
+        let expected_c = 1.0 / (omega * impedance_real);
+
+        let (svg, _, _) = draw_matching_network(0.0, 50.0, 150.0, impedance_real, 100.0, frequency);
+
+        let c_label = format_value(expected_c, "F");
+        assert!(svg.contains(&c_label), "Should display computed capacitance value: {}", c_label);
+    }
+
+    #[test]
+    fn test_impedance_to_lc_formulas() {
+        let frequency: f64 = 2e6;
+        let impedance_real: f64 = 75.0;
+        let impedance_imag: f64 = 200.0;
+        let omega = 2.0 * PI * frequency;
+
+        let l_value = impedance_imag.abs() / omega;
+        let c_value = 1.0 / (omega * impedance_real);
+
+        let expected_l = 200.0 / (2.0 * PI * 2e6);
+        let expected_c = 1.0 / (2.0 * PI * 2e6 * 75.0);
+
+        assert!((l_value - expected_l).abs() < 1e-12, "L formula: X_L = omega * L => L = X_L / omega");
+        assert!((c_value - expected_c).abs() < 1e-18, "C formula: X_C = 1/(omega*C) => C = 1/(omega*R)");
+    }
+
+    #[test]
+    fn test_transducer_creates_rectangle() {
+        let (svg, input_x, output_x) = draw_transducer(100.0, 50.0, 150.0);
+
+        assert!(svg.contains("<rect"), "Transducer should contain rectangle");
+        assert!(svg.contains("width=\"20\""), "Rectangle should have width 20");
+        assert!(svg.contains("height=\"25\""), "Rectangle should have height 25");
+        assert!(svg.contains("<line"), "Transducer should have ground connection line");
+        assert!((input_x - 100.0).abs() < 1e-6, "Input should be at x position");
+        assert!((output_x - 120.0).abs() < 1e-6, "Output should be at x + width (20)");
+    }
+
+    #[test]
+    fn test_generate_circuit_svg_basic_structure() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+        ];
+        let result = generate_circuit_svg(&components, 400.0, 200.0);
+
+        assert!((result.width - 400.0).abs() < 1e-6, "Width should match");
+        assert!((result.height - 200.0).abs() < 1e-6, "Height should match");
+        assert!(result.svg.contains("<svg"), "Should contain SVG opening tag");
+        assert!(result.svg.contains("</svg>"), "Should contain SVG closing tag");
+        assert!(result.svg.contains("viewBox=\"0 0 400 200\""), "Should have correct viewBox");
+    }
+
+    #[test]
+    fn test_generate_circuit_svg_full_chain() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+            CircuitComponent::Amplifier { gain: 10.0 },
+            CircuitComponent::MatchingNetwork { impedance_real: 50.0, impedance_imag: 100.0, frequency: 1e6 },
+            CircuitComponent::TransducerLoad { impedance_real: 50.0, impedance_imag: -100.0 },
+        ];
+        let result = generate_circuit_svg(&components, 600.0, 200.0);
+
+        assert!(result.svg.contains("<circle"), "Should contain signal generator circle");
+        assert!(result.svg.contains("<polygon"), "Should contain amplifier triangle");
+        assert!(result.svg.contains("<path"), "Should contain inductor paths");
+        assert!(result.svg.contains("<rect"), "Should contain transducer rectangle");
+    }
+
+    #[test]
+    fn test_generate_circuit_svg_ground_line() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+        ];
+        let result = generate_circuit_svg(&components, 400.0, 200.0);
+
+        let margin = 20.0;
+        let gnd_y = 200.0 - margin;
+        assert!(result.svg.contains(&format!("y1=\"{}\"", gnd_y)), "Ground line should be at correct y position");
+        assert!(result.svg.contains(&format!("y2=\"{}\"", gnd_y)), "Ground line should span horizontally");
+    }
+
+    #[test]
+    fn test_circuit_data_to_binary() {
+        let data = CircuitData {
+            width: 100.0,
+            height: 50.0,
+            svg: "<svg></svg>".to_string(),
+        };
+
+        let binary = data.to_binary();
+
+        assert!(binary.starts_with(b"CIRCUIT\0"), "Binary should start with magic header");
+        let width = f32::from_le_bytes([binary[8], binary[9], binary[10], binary[11]]);
+        let height = f32::from_le_bytes([binary[12], binary[13], binary[14], binary[15]]);
+        assert!((width - 100.0).abs() < 1e-6, "Width should be encoded correctly");
+        assert!((height - 50.0).abs() < 1e-6, "Height should be encoded correctly");
+
+        let svg_len = u32::from_le_bytes([binary[16], binary[17], binary[18], binary[19]]) as usize;
+        assert_eq!(svg_len, 11, "SVG length should be encoded correctly");
+        assert_eq!(&binary[20..], b"<svg></svg>", "SVG content should be appended");
+    }
+
+    #[test]
+    fn test_wire_connections_between_components() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+            CircuitComponent::Amplifier { gain: 10.0 },
+        ];
+        let result = generate_circuit_svg(&components, 400.0, 200.0);
+
+        let wire_count = result.svg.matches(&format!("stroke=\"{}\"", WIRE)).count();
+        assert!(wire_count >= 2, "Should have wire connections between components and ground");
+    }
+}

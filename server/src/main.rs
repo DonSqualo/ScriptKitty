@@ -105,10 +105,33 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn serialize_view_config(flat_shading: bool) -> Vec<u8> {
-    let mut data = Vec::with_capacity(16);
+struct CameraState {
+    position: [f32; 3],
+    target: [f32; 3],
+    fov: f32,
+}
+
+fn serialize_view_config(flat_shading: bool, camera: Option<CameraState>) -> Vec<u8> {
+    let mut data = Vec::with_capacity(40);
     data.extend_from_slice(b"VIEW\0\0\0\0");
     data.push(if flat_shading { 1 } else { 0 });
+
+    match camera {
+        Some(cam) => {
+            data.push(1); // has_camera = 1
+            data.extend_from_slice(&cam.position[0].to_le_bytes());
+            data.extend_from_slice(&cam.position[1].to_le_bytes());
+            data.extend_from_slice(&cam.position[2].to_le_bytes());
+            data.extend_from_slice(&cam.target[0].to_le_bytes());
+            data.extend_from_slice(&cam.target[1].to_le_bytes());
+            data.extend_from_slice(&cam.target[2].to_le_bytes());
+            data.extend_from_slice(&cam.fov.to_le_bytes());
+        }
+        None => {
+            data.push(0); // has_camera = 0
+        }
+    }
+
     data
 }
 
@@ -135,7 +158,7 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
         match process_single_file(&lua, &content, base_dir) {
             Ok(result) => {
                 // Send view config first
-                let view_binary = serialize_view_config(result.flat_shading);
+                let view_binary = serialize_view_config(result.flat_shading, result.camera);
                 let _ = tx.send(view_binary);
 
                 let binary = result.mesh.to_binary();
@@ -191,21 +214,65 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
     }
 }
 
+fn parse_plane_type(plane_str: &str) -> field::PlaneType {
+    match plane_str.to_uppercase().as_str() {
+        "XY" => field::PlaneType::XY,
+        "YZ" => field::PlaneType::YZ,
+        _ => field::PlaneType::XZ,
+    }
+}
+
+fn get_field_plane_config(lua: &mlua::Lua) -> (field::PlaneType, f64, field::Colormap) {
+    let globals = lua.globals();
+
+    let instruments: mlua::Table = match globals.get("Instruments") {
+        Ok(t) => t,
+        Err(_) => return (field::PlaneType::XZ, 0.0, field::Colormap::Jet),
+    };
+
+    let active: mlua::Table = match instruments.get("_active") {
+        Ok(t) => t,
+        Err(_) => return (field::PlaneType::XZ, 0.0, field::Colormap::Jet),
+    };
+
+    for pair in active.pairs::<i64, mlua::Table>() {
+        let (_, inst) = match pair {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let inst_type: String = match inst.get("_instrument_type") {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        if inst_type == "field_plane" {
+            let config: mlua::Table = match inst.get("_config") {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let plane_str: String = config.get("plane").unwrap_or_else(|_| "XZ".to_string());
+            let offset: f64 = config.get("offset").unwrap_or(0.0);
+            let colormap_str: String = config.get("color_map").unwrap_or_else(|_| "jet".to_string());
+
+            return (parse_plane_type(&plane_str), offset, field::Colormap::from_str(&colormap_str));
+        }
+    }
+
+    (field::PlaneType::XZ, 0.0, field::Colormap::Jet)
+}
+
 fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::FieldData> {
-    // Check if this file defines Helmholtz coil configuration
     if !content.contains("helmholtz") && !content.contains("coil_mean_radius") {
         return None;
     }
 
-    // Execute the Lua to get config values
     let result: mlua::Value = lua.load(content).eval().ok()?;
     let _table = result.as_table()?;
 
-    // Try to extract Helmholtz parameters from globals or return value
-    // The config table should be accessible after running the script
     let globals = lua.globals();
 
-    // Try to get config table
     let config: mlua::Table = globals.get("config").ok()?;
 
     let coil_mean_radius: f64 = config.get("coil_mean_radius").ok()?;
@@ -216,7 +283,6 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
     let packing_factor: f64 = config.get("packing_factor").unwrap_or(0.82);
     let current: f64 = config.get("current").unwrap_or(1.0);
 
-    // Calculate derived values
     let turns_per_layer = (windings / layers).ceil();
     let wire_pitch = wire_diameter / packing_factor;
     let coil_width = turns_per_layer * wire_pitch;
@@ -225,9 +291,11 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
     let coil_outer_r = coil_mean_radius + coil_height / 2.0;
     let ampere_turns = current * windings;
 
+    let (plane_type, plane_offset, colormap) = get_field_plane_config(lua);
+
     info!(
-        "Computing Helmholtz field: R={:.1}mm, gap={:.1}mm, {:.0} A·turns",
-        coil_mean_radius, gap, ampere_turns
+        "Computing Helmholtz field: R={:.1}mm, gap={:.1}mm, {:.0} A·turns, plane={:?}, offset={:.1}mm, colormap={:?}",
+        coil_mean_radius, gap, ampere_turns, plane_type, plane_offset, colormap
     );
 
     Some(field::compute_helmholtz_field(
@@ -238,8 +306,9 @@ fn try_compute_helmholtz_field(lua: &mlua::Lua, content: &str) -> Option<field::
         gap,
         ampere_turns,
         layers as usize,
-        field::PlaneType::XZ,
-        0.0,
+        plane_type,
+        plane_offset,
+        colormap,
     ))
 }
 
@@ -317,8 +386,8 @@ fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<circuit::Circu
 
     let mut components = Vec::new();
 
-    for pair in components_table.pairs::<i64, mlua::Table>() {
-        let (_, comp_table) = pair.ok()?;
+    for comp_result in components_table.sequence_values::<mlua::Table>() {
+        let comp_table = comp_result.ok()?;
         let comp_type: String = comp_table.get("component").ok()?;
         let config: mlua::Table = comp_table.get("config").ok()?;
 
@@ -366,6 +435,7 @@ struct ProcessResult {
     flat_shading: bool,
     #[allow(dead_code)]
     circular_segments: u32,
+    camera: Option<CameraState>,
 }
 
 fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Path) -> Result<ProcessResult> {
@@ -378,17 +448,41 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
     let result: mlua::Value = lua.load(content).eval()?;
 
     // Extract view config
-    let (flat_shading, circular_segments) = if let Some(table) = result.as_table() {
+    let (flat_shading, circular_segments, camera) = if let Some(table) = result.as_table() {
         if let Ok(view) = table.get::<_, mlua::Table>("view") {
-            (
-                view.get::<_, bool>("flat_shading").unwrap_or(false),
-                view.get::<_, u32>("circular_segments").unwrap_or(32),
-            )
+            let flat = view.get::<_, bool>("flat_shading").unwrap_or(false);
+            let segments = view.get::<_, u32>("circular_segments").unwrap_or(32);
+
+            let cam = if let Ok(cam_table) = view.get::<_, mlua::Table>("camera") {
+                let pos: Option<mlua::Table> = cam_table.get("position").ok();
+                let tgt: Option<mlua::Table> = cam_table.get("target").ok();
+                let fov: Option<f32> = cam_table.get("fov").ok();
+
+                if let (Some(pos_t), Some(tgt_t), Some(fov_v)) = (pos, tgt, fov) {
+                    let position = [
+                        pos_t.get::<_, f32>(1).unwrap_or(100.0),
+                        pos_t.get::<_, f32>(2).unwrap_or(100.0),
+                        pos_t.get::<_, f32>(3).unwrap_or(100.0),
+                    ];
+                    let target = [
+                        tgt_t.get::<_, f32>(1).unwrap_or(0.0),
+                        tgt_t.get::<_, f32>(2).unwrap_or(0.0),
+                        tgt_t.get::<_, f32>(3).unwrap_or(0.0),
+                    ];
+                    Some(CameraState { position, target, fov: fov_v })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            (flat, segments, cam)
         } else {
-            (false, 32)
+            (false, 32, None)
         }
     } else {
-        (false, 32)
+        (false, 32, None)
     };
 
     info!("Using Manifold backend for CSG, circular_segments={}", circular_segments);
@@ -398,7 +492,7 @@ fn process_single_file(lua: &mlua::Lua, content: &str, base_dir: &std::path::Pat
         export::process_exports_from_table(lua, table, base_dir);
     }
 
-    Ok(ProcessResult { mesh, flat_shading, circular_segments })
+    Ok(ProcessResult { mesh, flat_shading, circular_segments, camera })
 }
 
 async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>) {

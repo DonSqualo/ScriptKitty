@@ -23,10 +23,30 @@ pub struct CurrentLoop {
     pub ampere_turns: f64,   // Current × turns (A·turns)
 }
 
+/// Colormap selection for field visualization
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum Colormap {
+    #[default]
+    Jet = 0,
+    Viridis = 1,
+    Plasma = 2,
+}
+
+impl Colormap {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "viridis" => Colormap::Viridis,
+            "plasma" => Colormap::Plasma,
+            _ => Colormap::Jet,
+        }
+    }
+}
+
 /// Magnetic field data for visualization
 pub struct FieldData {
     // 2D slice data
     pub plane_type: PlaneType,
+    pub colormap: Colormap,
     pub slice_width: usize,
     pub slice_height: usize,
     pub slice_bounds: [f64; 4],  // Bounds in mm: [axis1_min, axis1_max, axis2_min, axis2_max]
@@ -61,9 +81,10 @@ impl FieldData {
             data.extend_from_slice(&(b as f32).to_le_bytes());
         }
 
-        // Plane type (u8) and offset (f32)
+        // Plane type (u8), offset (f32), colormap (u8)
         data.push(self.plane_type as u8);
         data.extend_from_slice(&(self.slice_offset as f32).to_le_bytes());
+        data.push(self.colormap as u8);
 
         // 2D slice data
         for &v in &self.slice_bx {
@@ -190,6 +211,7 @@ pub fn compute_helmholtz_field(
     num_layers: usize,     // Radial layers to model
     plane: PlaneType,      // Plane orientation for 2D slice
     plane_offset: f64,     // Offset along plane normal (mm)
+    colormap: Colormap,    // Colormap for visualization
 ) -> FieldData {
     // Create current loops to model the coils
     // Distribute loops across the cross-section
@@ -324,6 +346,7 @@ pub fn compute_helmholtz_field(
 
     FieldData {
         plane_type: plane,
+        colormap,
         slice_width,
         slice_height,
         slice_bounds,
@@ -336,5 +359,245 @@ pub fn compute_helmholtz_field(
         arrows_magnitudes,
         line_z,
         line_bz,
+    }
+}
+
+// ===========================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_single_loop(radius_mm: f64, ampere_turns: f64) -> CurrentLoop {
+        CurrentLoop {
+            center: [0.0, 0.0, 0.0],
+            radius: radius_mm,
+            normal: [0.0, 0.0, 1.0],
+            ampere_turns,
+        }
+    }
+
+    #[test]
+    fn test_single_loop_field_at_center() {
+        // On-axis field at center of a single loop: B_z = mu_0 * I / (2R)
+        let radius_mm = 50.0;
+        let radius_m = radius_mm * 1e-3;
+        let current = 1.0;
+
+        let loop_ = make_single_loop(radius_mm, current);
+        let b = biot_savart_loop(&loop_, [0.0, 0.0, 0.0], 256);
+
+        let expected_bz = MU0 * current / (2.0 * radius_m);
+
+        assert!(
+            b[0].abs() < 1e-12,
+            "Bx should be zero at center, got {}",
+            b[0]
+        );
+        assert!(
+            b[1].abs() < 1e-12,
+            "By should be zero at center, got {}",
+            b[1]
+        );
+        let rel_error = (b[2] - expected_bz).abs() / expected_bz;
+        assert!(
+            rel_error < 0.01,
+            "Bz error too large: got {:.6e}, expected {:.6e}, rel_error = {:.4}",
+            b[2],
+            expected_bz,
+            rel_error
+        );
+    }
+
+    #[test]
+    fn test_single_loop_field_on_axis() {
+        // On-axis field at distance z: B_z = mu_0 * I * R^2 / (2 * (R^2 + z^2)^(3/2))
+        let radius_mm = 50.0;
+        let radius_m = radius_mm * 1e-3;
+        let z_mm = 25.0;
+        let z_m = z_mm * 1e-3;
+        let current = 1.0;
+
+        let loop_ = make_single_loop(radius_mm, current);
+        let b = biot_savart_loop(&loop_, [0.0, 0.0, z_mm], 256);
+
+        let r2_plus_z2 = radius_m * radius_m + z_m * z_m;
+        let expected_bz = MU0 * current * radius_m * radius_m / (2.0 * r2_plus_z2.powf(1.5));
+
+        assert!(
+            b[0].abs() < 1e-12,
+            "Bx should be zero on axis, got {}",
+            b[0]
+        );
+        assert!(
+            b[1].abs() < 1e-12,
+            "By should be zero on axis, got {}",
+            b[1]
+        );
+        let rel_error = (b[2] - expected_bz).abs() / expected_bz;
+        assert!(
+            rel_error < 0.01,
+            "Bz error too large: got {:.6e}, expected {:.6e}, rel_error = {:.4}",
+            b[2],
+            expected_bz,
+            rel_error
+        );
+    }
+
+    #[test]
+    fn test_helmholtz_field_at_center() {
+        // Helmholtz coil: B_center = 0.7155 * mu_0 * n * I / R
+        // Standard Helmholtz: gap between coils = radius (so coil centers at z = ±R/2)
+        let radius_mm = 50.0;
+        let radius_m = radius_mm * 1e-3;
+        let current = 1.0;
+
+        // Two loops at z = ±R/2 (Helmholtz spacing)
+        let half_gap_mm = radius_mm / 2.0;
+        let loops = vec![
+            CurrentLoop {
+                center: [0.0, 0.0, half_gap_mm],
+                radius: radius_mm,
+                normal: [0.0, 0.0, 1.0],
+                ampere_turns: current,
+            },
+            CurrentLoop {
+                center: [0.0, 0.0, -half_gap_mm],
+                radius: radius_mm,
+                normal: [0.0, 0.0, 1.0],
+                ampere_turns: current,
+            },
+        ];
+
+        let b = compute_field(&loops, [0.0, 0.0, 0.0]);
+        let expected_bz = 0.7155 * MU0 * current / radius_m;
+
+        assert!(
+            b[0].abs() < 1e-12,
+            "Bx should be zero at center, got {}",
+            b[0]
+        );
+        assert!(
+            b[1].abs() < 1e-12,
+            "By should be zero at center, got {}",
+            b[1]
+        );
+        let rel_error = (b[2] - expected_bz).abs() / expected_bz;
+        assert!(
+            rel_error < 0.02,
+            "Helmholtz Bz error: got {:.6e}, expected {:.6e}, rel_error = {:.4}",
+            b[2],
+            expected_bz,
+            rel_error
+        );
+    }
+
+    #[test]
+    fn test_helmholtz_field_uniformity() {
+        // At Helmholtz condition (gap = R), field should be uniform near center
+        // Check that dB/dz ≈ 0 by comparing field at center vs small offset
+        let radius_mm = 50.0;
+        let current = 1.0;
+
+        let half_gap_mm = radius_mm / 2.0;
+        let loops = vec![
+            CurrentLoop {
+                center: [0.0, 0.0, half_gap_mm],
+                radius: radius_mm,
+                normal: [0.0, 0.0, 1.0],
+                ampere_turns: current,
+            },
+            CurrentLoop {
+                center: [0.0, 0.0, -half_gap_mm],
+                radius: radius_mm,
+                normal: [0.0, 0.0, 1.0],
+                ampere_turns: current,
+            },
+        ];
+
+        let b_center = compute_field(&loops, [0.0, 0.0, 0.0]);
+        let offset = 5.0; // 5mm offset (10% of radius)
+        let b_plus = compute_field(&loops, [0.0, 0.0, offset]);
+        let b_minus = compute_field(&loops, [0.0, 0.0, -offset]);
+
+        // Field should be symmetric
+        let symmetry_error = (b_plus[2] - b_minus[2]).abs() / b_center[2];
+        assert!(
+            symmetry_error < 1e-10,
+            "Field not symmetric: Bz(+z) = {:.6e}, Bz(-z) = {:.6e}",
+            b_plus[2],
+            b_minus[2]
+        );
+
+        // Field should be nearly constant (Helmholtz condition: d²B/dz² = 0 at center)
+        let uniformity_error = (b_plus[2] - b_center[2]).abs() / b_center[2];
+        assert!(
+            uniformity_error < 0.01,
+            "Field not uniform: Bz(0) = {:.6e}, Bz(±5mm) = {:.6e}, variation = {:.4}%",
+            b_center[2],
+            b_plus[2],
+            uniformity_error * 100.0
+        );
+    }
+
+    #[test]
+    fn test_compute_helmholtz_field_structure() {
+        let field_data = compute_helmholtz_field(
+            50.0,  // coil_radius (unused)
+            45.0,  // coil_inner_r
+            55.0,  // coil_outer_r
+            10.0,  // coil_width
+            50.0,  // gap (Helmholtz: gap = mean radius)
+            1.0,   // ampere_turns
+            4,     // num_layers
+            PlaneType::XZ,
+            0.0,   // plane_offset
+            Colormap::Jet,
+        );
+
+        assert_eq!(field_data.slice_width, 80);
+        assert_eq!(field_data.slice_height, 80);
+        assert_eq!(field_data.slice_bx.len(), 80 * 80);
+        assert_eq!(field_data.slice_bz.len(), 80 * 80);
+        assert_eq!(field_data.slice_magnitude.len(), 80 * 80);
+        assert_eq!(field_data.line_z.len(), 101);
+        assert_eq!(field_data.line_bz.len(), 101);
+        assert!(field_data.arrows_positions.len() > 0);
+        assert_eq!(field_data.arrows_positions.len() % 3, 0);
+        assert_eq!(
+            field_data.arrows_positions.len(),
+            field_data.arrows_vectors.len()
+        );
+        assert_eq!(
+            field_data.arrows_magnitudes.len() * 3,
+            field_data.arrows_positions.len()
+        );
+    }
+
+    #[test]
+    fn test_field_data_to_binary() {
+        let field_data = compute_helmholtz_field(
+            50.0, 45.0, 55.0, 10.0, 50.0, 1.0, 2, PlaneType::XZ, 0.0, Colormap::Jet,
+        );
+
+        let binary = field_data.to_binary();
+
+        // Check header
+        assert_eq!(&binary[0..6], b"FIELD\0");
+
+        // Check dimensions (u32 little-endian)
+        let width = u32::from_le_bytes([binary[8], binary[9], binary[10], binary[11]]);
+        let height = u32::from_le_bytes([binary[12], binary[13], binary[14], binary[15]]);
+        assert_eq!(width, 80);
+        assert_eq!(height, 80);
+    }
+
+    #[test]
+    fn test_colormap_from_str() {
+        assert_eq!(Colormap::from_str("jet"), Colormap::Jet);
+        assert_eq!(Colormap::from_str("viridis"), Colormap::Viridis);
+        assert_eq!(Colormap::from_str("VIRIDIS"), Colormap::Viridis);
+        assert_eq!(Colormap::from_str("plasma"), Colormap::Plasma);
+        assert_eq!(Colormap::from_str("unknown"), Colormap::Jet);
     }
 }

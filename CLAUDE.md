@@ -73,3 +73,13 @@ Design a cell well study setup of combinig ultrasound with magnetic fields
 
 Do not implement any function, definition or description for a feature that has not been explicitly requested.
 Never implement code that will be unused, always ask to remove existing code that is unused.
+
+## Ralph Loop Termination
+When running in ralph.sh loop mode and all requested tasks are complete:
+- All todo items marked completed
+- Tests passing
+- Code committed
+- No pending work remaining
+
+Output this exact termination signal on its own line:
+<promise>COMPLETE</promise>

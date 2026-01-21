@@ -2,8 +2,8 @@
 //! Uses manifold3d for guaranteed watertight manifold meshes
 
 use anyhow::{anyhow, Result};
-use manifold3d::types::{Matrix4x3, PositiveF64, Vec3};
-use manifold3d::{Manifold, MeshGL};
+use manifold3d::types::{Matrix4x3, Point2, PositiveF64, PositiveI32, Vec3};
+use manifold3d::{Manifold, MeshGL, Polygons, SimplePolygon};
 use mlua::{Lua, Value};
 use std::alloc::{alloc, Layout};
 use std::os::raw::c_void;
@@ -212,6 +212,39 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segme
         "cube" => {
             let size: f64 = params.get("size").unwrap_or(1.0);
             Ok(Manifold::new_cuboid(pos(size), pos(size), pos(size), false))
+        }
+        "torus" => {
+            let major_radius: f64 = params.get("major_radius")?;
+            let minor_radius: f64 = params.get("minor_radius")?;
+
+            let segments = circular_segments as usize;
+            let mut points: Vec<Point2> = Vec::with_capacity(segments);
+            for i in 0..segments {
+                let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                let x = major_radius + minor_radius * angle.cos();
+                let y = minor_radius * angle.sin();
+                points.push(Point2 { x, y });
+            }
+
+            let simple_polygon = SimplePolygon::new_from_points(points);
+            let polygons = Polygons::from_simple_polygons(vec![simple_polygon]);
+            let torus = polygons
+                .revolve(
+                    Some(PositiveI32::new(circular_segments as i32).unwrap()),
+                    Option::<manifold3d::types::NormalizedAngle>::None,
+                )
+                .map_err(|e| anyhow!("Torus creation failed: {:?}", e))?;
+
+            let rx = -std::f64::consts::FRAC_PI_2;
+            let (sx, cx) = (rx.sin(), rx.cos());
+            let matrix = Matrix4x3::new([
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, cx, -sx),
+                Vec3::new(0.0, sx, cx),
+                Vec3::new(0.0, 0.0, 0.0),
+            ]);
+
+            Ok(torus.transform(matrix))
         }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }

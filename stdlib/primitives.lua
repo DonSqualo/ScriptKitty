@@ -115,6 +115,21 @@ local function cylinder_sdf(r, h)
   end
 end
 
+-- SDF for sphere (centered at origin)
+local function sphere_sdf(r)
+  return function(x, y, z)
+    return math.sqrt(x*x + y*y + z*z) - r
+  end
+end
+
+-- SDF for torus (centered at origin, hole along Z axis)
+local function torus_sdf(major_radius, minor_radius)
+  return function(x, y, z)
+    local q = math.sqrt(x*x + y*y) - major_radius
+    return math.sqrt(q*q + z*z) - minor_radius
+  end
+end
+
 --- Create a box/cuboid (corner at origin)
 -- @param w Width (X dimension)
 -- @param d Depth (Y dimension), defaults to w
@@ -138,6 +153,28 @@ function Primitives.cylinder(r, h)
   return Shape(cylinder_sdf(r, h),
     {min = {-r, -r, 0}, max = {r, r, h}},
     {primitive = "cylinder", params = {r = r, h = h}}
+  )
+end
+
+--- Create a sphere centered at origin
+-- @param r Radius
+-- @return Shape object
+function Primitives.sphere(r)
+  return Shape(sphere_sdf(r),
+    {min = {-r, -r, -r}, max = {r, r, r}},
+    {primitive = "sphere", params = {r = r}}
+  )
+end
+
+--- Create a torus centered at origin with hole along Z axis
+-- @param major_radius Distance from center of torus to center of tube
+-- @param minor_radius Radius of the tube
+-- @return Shape object
+function Primitives.torus(major_radius, minor_radius)
+  local outer = major_radius + minor_radius
+  return Shape(torus_sdf(major_radius, minor_radius),
+    {min = {-outer, -outer, -minor_radius}, max = {outer, outer, minor_radius}},
+    {primitive = "torus", params = {major_radius = major_radius, minor_radius = minor_radius}}
   )
 end
 

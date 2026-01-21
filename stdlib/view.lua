@@ -254,6 +254,11 @@ function View.serialize()
   return {
     flat_shading = View._state.render.flat_shading,
     circular_segments = View._state.render.circular_segments,
+    camera = {
+      position = View._state.camera.position,
+      target = View._state.camera.target,
+      fov = View._state.camera.fov,
+    },
   }
 end
 

@@ -302,6 +302,22 @@ const PLANE_XZ = 0;
 const PLANE_XY = 1;
 const PLANE_YZ = 2;
 
+// Colormap constants matching server
+const COLORMAP_JET = 0;
+const COLORMAP_VIRIDIS = 1;
+const COLORMAP_PLASMA = 2;
+
+function get_colormap_fn(colormap_id: number): ColormapFn {
+  switch (colormap_id) {
+    case COLORMAP_VIRIDIS:
+      return value_to_color_viridis;
+    case COLORMAP_PLASMA:
+      return value_to_color_plasma;
+    default:
+      return value_to_color;
+  }
+}
+
 // Parse binary field data
 function parse_field_data(buffer: ArrayBuffer) {
   const view = new DataView(buffer);
@@ -317,9 +333,10 @@ function parse_field_data(buffer: ArrayBuffer) {
   const axis2Min = view.getFloat32(offset, true); offset += 4;
   const axis2Max = view.getFloat32(offset, true); offset += 4;
 
-  // Plane type (u8) and offset (f32)
+  // Plane type (u8), offset (f32), colormap (u8)
   const planeType = view.getUint8(offset); offset += 1;
   const planeOffset = view.getFloat32(offset, true); offset += 4;
+  const colormapId = view.getUint8(offset); offset += 1;
 
   const sliceSize = sliceWidth * sliceHeight;
 
@@ -355,6 +372,7 @@ function parse_field_data(buffer: ArrayBuffer) {
       bounds: [axis1Min, axis1Max, axis2Min, axis2Max],
       plane_type: planeType,
       plane_offset: planeOffset,
+      colormap: get_colormap_fn(colormapId),
       bx: sliceBx,
       bz: sliceBz,
       magnitude: sliceMagnitude,
@@ -419,8 +437,8 @@ function create_arrow_field(arrows: { positions: Float32Array, vectors: Float32A
 }
 
 // Create 2D field plane visualization
-function create_field_plane(slice: { width: number, height: number, bounds: number[], plane_type: number, plane_offset: number, magnitude: Float32Array }, colormap: ColormapFn = value_to_color): THREE.Mesh {
-  const { width, height, bounds, plane_type, plane_offset, magnitude } = slice;
+function create_field_plane(slice: { width: number, height: number, bounds: number[], plane_type: number, plane_offset: number, colormap: ColormapFn, magnitude: Float32Array }): THREE.Mesh {
+  const { width, height, bounds, plane_type, plane_offset, colormap, magnitude } = slice;
   const [axis1Min, axis1Max, axis2Min, axis2Max] = bounds;
 
   // Create texture from magnitude data
@@ -606,7 +624,26 @@ function update_mesh(buffer: ArrayBuffer) {
   if (header_8.startsWith('VIEW')) {
     const view = new DataView(buffer);
     flat_shading = view.getUint8(8) === 1;
-    console.log(`View config: flat_shading=${flat_shading}`);
+    const has_camera = view.getUint8(9) === 1;
+
+    if (has_camera && buffer.byteLength >= 38) {
+      const cam_x = view.getFloat32(10, true);
+      const cam_y = view.getFloat32(14, true);
+      const cam_z = view.getFloat32(18, true);
+      const tgt_x = view.getFloat32(22, true);
+      const tgt_y = view.getFloat32(26, true);
+      const tgt_z = view.getFloat32(30, true);
+      const fov = view.getFloat32(34, true);
+
+      camera.position.set(cam_x, cam_y, cam_z);
+      controls.target.set(tgt_x, tgt_y, tgt_z);
+      camera.fov = fov;
+      camera.updateProjectionMatrix();
+      controls.update();
+      console.log(`View config: flat_shading=${flat_shading}, camera=(${cam_x}, ${cam_y}, ${cam_z}), target=(${tgt_x}, ${tgt_y}, ${tgt_z}), fov=${fov}`);
+    } else {
+      console.log(`View config: flat_shading=${flat_shading}, using default camera`);
+    }
     return;
   }
 
