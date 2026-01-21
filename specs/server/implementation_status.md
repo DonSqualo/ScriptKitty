@@ -44,7 +44,7 @@ Actual backend implementation status vs Lua API declarations (post-cleanup 2026-
 | MagneticFieldPlane | Yes | field.rs | XZ/XY/YZ planes | **Complete** |
 | AcousticPressurePlane | Yes | acoustic.rs | XZ/XY/YZ planes | **Complete** |
 | 1D line plot | Implicit | field.rs | Canvas graph | **Complete** |
-| Probe | Yes | Serializes only | - | **API only** |
+| Probe | Yes | field.rs | Line viz | **Complete** |
 | GaussMeter | Yes | field.rs | Measurement | **Complete** |
 | Hydrophone | Yes | acoustic.rs | Measurement | **Complete** |
 

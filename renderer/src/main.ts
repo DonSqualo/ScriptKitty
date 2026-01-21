@@ -28,6 +28,12 @@ let arrows_group: THREE.Group | null = null;
 let field_plane: THREE.Mesh | null = null;
 let flat_shading: boolean = true;
 
+// Measurement markers (GaussMeter, Hydrophone)
+let measurement_markers: THREE.Group | null = null;
+
+// Probe line visualizations
+let probe_lines: THREE.Group | null = null;
+
 // Circuit overlay element and 3D anchor
 const circuit_overlay = document.getElementById('circuit-overlay')!;
 const circuit_anchor = new THREE.Vector3(0, 0, 60); // Anchor point above Z axis
@@ -629,6 +635,165 @@ function parse_nanovna_data(buffer: ArrayBuffer) {
   };
 }
 
+// Parse point measurement data (GaussMeter/Hydrophone)
+function parse_measure_data(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  let offset = 8; // Skip "MEASURE\0" header
+
+  const position: [number, number, number] = [
+    view.getFloat32(offset, true),
+    view.getFloat32(offset + 4, true),
+    view.getFloat32(offset + 8, true),
+  ];
+  offset += 12;
+
+  const value: [number, number, number] = [
+    view.getFloat32(offset, true),
+    view.getFloat32(offset + 4, true),
+    view.getFloat32(offset + 8, true),
+  ];
+  offset += 12;
+
+  const magnitude = view.getFloat32(offset, true);
+  offset += 4;
+
+  const label_len = view.getUint32(offset, true);
+  offset += 4;
+
+  const label_bytes = new Uint8Array(buffer, offset, label_len);
+  const label = new TextDecoder().decode(label_bytes);
+
+  return { position, value, magnitude, label };
+}
+
+// Parse line probe data
+function parse_lnprobe_data(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  let offset = 8; // Skip "LNPROBE\0" header
+
+  const num_points = view.getUint32(offset, true);
+  offset += 4;
+
+  const start: [number, number, number] = [
+    view.getFloat32(offset, true),
+    view.getFloat32(offset + 4, true),
+    view.getFloat32(offset + 8, true),
+  ];
+  offset += 12;
+
+  const stop: [number, number, number] = [
+    view.getFloat32(offset, true),
+    view.getFloat32(offset + 4, true),
+    view.getFloat32(offset + 8, true),
+  ];
+  offset += 12;
+
+  const positions = new Float32Array(num_points * 3);
+  for (let i = 0; i < num_points * 3; i++) {
+    positions[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  const values = new Float32Array(num_points * 3);
+  for (let i = 0; i < num_points * 3; i++) {
+    values[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  const magnitudes = new Float32Array(num_points);
+  for (let i = 0; i < num_points; i++) {
+    magnitudes[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  const name_len = view.getUint32(offset, true);
+  offset += 4;
+
+  const name_bytes = new Uint8Array(buffer, offset, name_len);
+  const name = new TextDecoder().decode(name_bytes);
+
+  return { num_points, start, stop, positions, values, magnitudes, name };
+}
+
+// Display point measurement as 3D marker
+function display_measurement(data: { position: [number, number, number], value: [number, number, number], magnitude: number, label: string }) {
+  if (!measurement_markers) {
+    measurement_markers = new THREE.Group();
+    scene.add(measurement_markers);
+  }
+
+  const [x, y, z] = data.position;
+
+  // Create sphere marker at measurement position
+  const marker_geo = new THREE.SphereGeometry(2, 16, 16);
+  const marker_mat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8 });
+  const marker = new THREE.Mesh(marker_geo, marker_mat);
+  marker.position.set(x, y, z);
+  measurement_markers.add(marker);
+
+  // Create text sprite for label
+  const sprite_canvas = document.createElement('canvas');
+  sprite_canvas.width = 256;
+  sprite_canvas.height = 64;
+  const ctx = sprite_canvas.getContext('2d')!;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.fillStyle = '#0f0';
+  ctx.font = '14px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillText(data.label, 128, 24);
+  ctx.fillText(`${(data.magnitude * 1000).toFixed(3)} mT`, 128, 44);
+
+  const sprite_texture = new THREE.CanvasTexture(sprite_canvas);
+  const sprite_mat = new THREE.SpriteMaterial({ map: sprite_texture, transparent: true });
+  const sprite = new THREE.Sprite(sprite_mat);
+  sprite.position.set(x, y, z + 8);
+  sprite.scale.set(25, 6, 1);
+  measurement_markers.add(sprite);
+
+  console.log(`Measurement '${data.label}': pos=(${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}), |B|=${(data.magnitude * 1000).toFixed(3)} mT`);
+}
+
+// Display line probe as 3D line
+function display_probe_line(data: { num_points: number, start: [number, number, number], stop: [number, number, number], positions: Float32Array, magnitudes: Float32Array, name: string }) {
+  if (!probe_lines) {
+    probe_lines = new THREE.Group();
+    scene.add(probe_lines);
+  }
+
+  // Create line geometry
+  const line_points: THREE.Vector3[] = [];
+  for (let i = 0; i < data.num_points; i++) {
+    line_points.push(new THREE.Vector3(
+      data.positions[i * 3],
+      data.positions[i * 3 + 1],
+      data.positions[i * 3 + 2]
+    ));
+  }
+
+  const line_geo = new THREE.BufferGeometry().setFromPoints(line_points);
+  const line_mat = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 });
+  const line = new THREE.Line(line_geo, line_mat);
+  probe_lines.add(line);
+
+  // Add endpoint markers
+  const start_marker = new THREE.Mesh(
+    new THREE.SphereGeometry(1.5, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+  );
+  start_marker.position.set(data.start[0], data.start[1], data.start[2]);
+  probe_lines.add(start_marker);
+
+  const end_marker = new THREE.Mesh(
+    new THREE.SphereGeometry(1.5, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0xff0000 })
+  );
+  end_marker.position.set(data.stop[0], data.stop[1], data.stop[2]);
+  probe_lines.add(end_marker);
+
+  console.log(`Probe '${data.name}': ${data.num_points} points from (${data.start[0].toFixed(1)}, ${data.start[1].toFixed(1)}, ${data.start[2].toFixed(1)}) to (${data.stop[0].toFixed(1)}, ${data.stop[1].toFixed(1)}, ${data.stop[2].toFixed(1)})`);
+}
+
 // Draw NanoVNA S11 graph
 function draw_nanovna(data: { frequencies: Float32Array, magnitudes: Float32Array, min_s11_db: number, min_s11_freq: number }) {
   const ctx = nanovna_ctx;
@@ -791,6 +956,20 @@ function update_mesh(buffer: ArrayBuffer) {
     return;
   }
 
+  // Handle point measurement data (GaussMeter)
+  if (header_8 === 'MEASURE\0') {
+    const measure_data = parse_measure_data(buffer);
+    display_measurement(measure_data);
+    return;
+  }
+
+  // Handle line probe data
+  if (header_8 === 'LNPROBE\0') {
+    const probe_data = parse_lnprobe_data(buffer);
+    display_probe_line(probe_data);
+    return;
+  }
+
   if (header_5 === 'FIELD') {
     // Parse and display field data
     const fieldData = parse_field_data(buffer);
@@ -841,6 +1020,16 @@ function update_mesh(buffer: ArrayBuffer) {
   if (field_plane) {
     scene.remove(field_plane);
     field_plane = null;
+  }
+  // Clear measurement markers
+  if (measurement_markers) {
+    scene.remove(measurement_markers);
+    measurement_markers = null;
+  }
+  // Clear probe lines
+  if (probe_lines) {
+    scene.remove(probe_lines);
+    probe_lines = null;
   }
   // Hide circuit overlay
   circuit_overlay.classList.remove('visible');

@@ -49,6 +49,15 @@ Bridge = {
 }
 Bridge.outer_radius = Resonator.outer_radius + Bridge.thickness + Bridge.distance
 
+CouplingCoil = {
+  turns = 1,
+  radius = Resonator.outer_radius,
+  wire_diameter = 1.5,
+  distance = 5.0,
+  resistance = 0.1,
+}
+CouplingCoil.z_position = Resonator.height / 2 + CouplingCoil.distance
+
 Scaffold = {
   clearance = 1.0,
   bridge_clearance = 2.0,
@@ -144,6 +153,17 @@ Bridge.dielectric = difference(
 ):centered():material(ptfe)
 
 -- ===========================
+-- Geometry: Coupling Coil
+-- ===========================
+
+CouplingCoil.inner_radius = CouplingCoil.radius - CouplingCoil.wire_diameter / 2
+CouplingCoil.outer_radius = CouplingCoil.radius + CouplingCoil.wire_diameter / 2
+
+CouplingCoil.body = ring(CouplingCoil.inner_radius, CouplingCoil.outer_radius, CouplingCoil.wire_diameter)
+  :at(0, 0, CouplingCoil.z_position - CouplingCoil.wire_diameter / 2)
+  :material(copper)
+
+-- ===========================
 -- Geometry: Scaffold
 -- ===========================
 
@@ -212,6 +232,7 @@ local assembly = group("helmholtz_coil", {
   Bridge.body,
   Bridge.dielectric,
   Scaffold.body,
+  CouplingCoil.body,
 })
 
 ScriptCAD.register(assembly)
@@ -347,6 +368,20 @@ print(string.format("Actual B-field estimate (d=%.1fmm): %.3f mT", Coil.center_d
 print(string.format("Deviation from ideal: %.1f%%", (B_total / B_ideal - 1) * 100))
 
 export_stl("helmholtz_scaffold.stl", Scaffold.body, 128)
+
+-- ===========================
+-- NanoVNA Frequency Sweep
+-- ===========================
+
+NanoVNA = {
+  f_start = 1e6,
+  f_stop = 100e6,
+  num_points = 201,
+  coil_radius = CouplingCoil.radius,
+  num_turns = CouplingCoil.turns,
+  wire_diameter = CouplingCoil.wire_diameter,
+  coil_resistance = CouplingCoil.resistance,
+}
 
 view({
   flat_shading = true,

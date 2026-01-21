@@ -68,6 +68,13 @@ Fixed `ring` primitive failing with `InvalidConstruction` error.
 - Solution: Reimplemented ring as difference of two cylinders in `geometry.rs`
 - Ring now created correctly via `outer_cylinder.difference(&inner_cylinder)`
 
+### Probe Line Parsing and Renderer Support (2026-01-21)
+Fixed Probe line measurement to use Lua array format.
+- Problem: Backend expected `line.start`/`line.stop` keys but Lua API uses array `line[1]`/`line[2]`
+- Solution: Changed `line_table.get("start")` to `line_table.get(1)` in main.rs
+- Added renderer support for MEASURE and LNPROBE WebSocket messages
+- Files: `server/src/main.rs`, `renderer/src/main.ts`
+
 ## Completed (Reference)
 
 ### Export

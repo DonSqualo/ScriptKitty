@@ -518,12 +518,13 @@ fn try_compute_probe_measurements(lua: &mlua::Lua, content: &str) -> Vec<field::
             Err(_) => continue,
         };
 
-        let start_table: mlua::Table = match line_table.get("start") {
+        // Lua API uses array format: line = { {x1,y1,z1}, {x2,y2,z2} }
+        let start_table: mlua::Table = match line_table.get(1) {
             Ok(s) => s,
             Err(_) => continue,
         };
 
-        let stop_table: mlua::Table = match line_table.get("stop") {
+        let stop_table: mlua::Table = match line_table.get(2) {
             Ok(s) => s,
             Err(_) => continue,
         };
