@@ -31,7 +31,7 @@ divide things simply by a line if you have to
 ## Documentation
 - When authoring documentation (Rust doc comments, Lua stdlib docs, spec files), capture WHY tests and the backing implementation are important - not just what they do
 - Document the real-world purpose: what physical device does this simulate? What measurement does this enable?
-- Link API declarations to their backend implementation status (see specs/implementation_status.md)
+- Link API declarations to their backend implementation status (see specs/server/implementation_status.md)
 - No aspirational documentation - if a feature isn't implemented, say so explicitly
 
 ## Editing frontend code

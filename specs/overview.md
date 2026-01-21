@@ -15,8 +15,8 @@ This is a CAD tool with one fundamental philosophy: for each project (real world
 - If two projects need `torus()`, Claude generates it twice - no sharing, no accumulation
 - Specs capture learnings and pitfalls, not reusable code
 
-See [garbage_collection.md](garbage_collection.md) for the post-project review process.
-See [implementation_status.md](implementation_status.md) for API vs backend implementation matrix.
+See [garbage_collection.md](server/garbage_collection.md) for the post-project review process.
+See [implementation_status.md](server/implementation_status.md) for API vs backend implementation matrix.
 
 ## Documentation Philosophy
 
@@ -94,9 +94,9 @@ Transforms are NOT baked into SDF - they're serialized and applied by Rust backe
 
 ## Module Index
 
-- [primitives.md](primitives.md) - Basic shapes
-- [csg.md](csg.md) - Boolean operations
-- [groups.md](groups.md) - Hierarchy and components
-- [export.md](export.md) - File output
-- [view.md](view.md) - Camera and rendering
-- [gotchas.md](gotchas.md) - Known pitfalls
+- [primitives.md](stdlib/primitives.md) - Basic shapes
+- [csg.md](stdlib/csg.md) - Boolean operations
+- [groups.md](stdlib/groups.md) - Hierarchy and components
+- [export.md](stdlib/export.md) - File output
+- [view.md](stdlib/view.md) - Camera and rendering
+- [gotchas.md](stdlib/gotchas.md) - Known pitfalls

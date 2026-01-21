@@ -30,12 +30,12 @@ Current state of ScriptKitty after cleanup (2026-01-21).
 
 ## Deleted (specs preserved)
 
-### Acoustic (`specs/acoustic.md`)
+### Acoustic (`specs/stdlib/acoustic.md`)
 - Rayleigh-Sommerfeld pressure field computation
 - AcousticPressurePlane, AcousticEnergyPlane, AcousticIntensityPlane
 - Hydrophone probe
 
-### Circuits (`specs/circuits.md`)
+### Circuits (`specs/stdlib/circuits.md`)
 - SVG circuit diagram generation
 - SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad
 - L-match calculation
@@ -104,16 +104,19 @@ renderer/src/
 
 specs/
 ├── overview.md       - Architecture philosophy
-├── architecture.md   - System diagram
-├── implementation_status.md - API vs backend matrix
-├── primitives.md     - box(), cylinder() docs
-├── csg.md            - Boolean ops docs
-├── groups.md         - Hierarchy docs
-├── export.md         - File output docs
-├── view.md           - Camera/render docs
-├── colormap_plane.md - Field visualization docs
-├── gotchas.md        - Known pitfalls
-├── garbage_collection.md - Post-project review
-├── acoustic.md       - [NEW] Deleted acoustic implementation
-└── circuits.md       - [NEW] Deleted circuit implementation
+├── server/
+│   ├── architecture.md   - System diagram
+│   ├── implementation_status.md - API vs backend matrix
+│   └── garbage_collection.md - Post-project review
+├── stdlib/
+│   ├── primitives.md     - box(), cylinder() docs
+│   ├── csg.md            - Boolean ops docs
+│   ├── groups.md         - Hierarchy docs
+│   ├── export.md         - File output docs
+│   ├── view.md           - Camera/render docs
+│   ├── gotchas.md        - Known pitfalls
+│   ├── acoustic.md       - Deleted acoustic implementation
+│   └── circuits.md       - Deleted circuit implementation
+└── renderer/
+    └── colormap_plane.md - Field visualization docs
 ```

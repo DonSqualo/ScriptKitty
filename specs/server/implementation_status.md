@@ -22,7 +22,7 @@ Actual backend implementation status vs Lua API declarations (post-cleanup 2026-
 | Type | Lua API | Rust Backend | Status |
 |------|---------|--------------|--------|
 | Helmholtz magnetic field | `magnetostatic()` | field.rs (Biot-Savart) | **Pattern-matched** |
-| Acoustic (deleted) | - | - | See specs/acoustic.md |
+| Acoustic (deleted) | - | - | See specs/stdlib/acoustic.md |
 
 **Pattern-matched**: Backend recognizes specific keywords (e.g., "helmholtz", "coil_mean_radius") and runs hardcoded computation.
 
