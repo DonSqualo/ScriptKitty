@@ -18,8 +18,7 @@ const MU0: f64 = 4.0 * PI * 1e-7; // Permeability of free space (H/m)
 pub struct CurrentLoop {
     pub center: [f64; 3],    // Center position (mm)
     pub radius: f64,         // Radius (mm)
-    #[allow(dead_code)]
-    pub normal: [f64; 3],    // Normal direction (unit vector) - for future non-Z-aligned coils
+    pub normal: [f64; 3],    // Normal direction (unit vector)
     pub ampere_turns: f64,   // Current × turns (A·turns)
 }
 
@@ -140,8 +139,34 @@ fn biot_savart_loop(loop_: &CurrentLoop, point: [f64; 3], num_segments: usize) -
     let py = point[1] * 1e-3;
     let pz = point[2] * 1e-3;
 
-    // For Z-axis aligned loop (normal = [0, 0, 1])
-    // Loop points: (cx + R*cos(θ), cy + R*sin(θ), cz)
+    // Build orthonormal basis (u, v, n) where n is the coil normal
+    let nx = loop_.normal[0];
+    let ny = loop_.normal[1];
+    let nz = loop_.normal[2];
+
+    // Find a reference vector not parallel to n for cross product
+    let (ref_x, ref_y, ref_z) = if nx.abs() < 0.9 {
+        (1.0, 0.0, 0.0)
+    } else {
+        (0.0, 1.0, 0.0)
+    };
+
+    // u = n × ref (then normalize)
+    let ux_raw = ny * ref_z - nz * ref_y;
+    let uy_raw = nz * ref_x - nx * ref_z;
+    let uz_raw = nx * ref_y - ny * ref_x;
+    let u_mag = (ux_raw * ux_raw + uy_raw * uy_raw + uz_raw * uz_raw).sqrt();
+    let ux = ux_raw / u_mag;
+    let uy = uy_raw / u_mag;
+    let uz = uz_raw / u_mag;
+
+    // v = n × u
+    let vx = ny * uz - nz * uy;
+    let vy = nz * ux - nx * uz;
+    let vz = nx * uy - ny * ux;
+
+    // Wire position: center + R * (u * cos(θ) + v * sin(θ))
+    // dl vector: R * dθ * (-u * sin(θ) + v * cos(θ))
 
     let dtheta = 2.0 * PI / num_segments as f64;
 
@@ -149,15 +174,18 @@ fn biot_savart_loop(loop_: &CurrentLoop, point: [f64; 3], num_segments: usize) -
         let theta = i as f64 * dtheta;
         let theta_mid = theta + dtheta / 2.0;
 
+        let cos_t = theta_mid.cos();
+        let sin_t = theta_mid.sin();
+
         // Wire element position
-        let wx = cx + r_m * theta_mid.cos();
-        let wy = cy + r_m * theta_mid.sin();
-        let wz = cz;
+        let wx = cx + r_m * (ux * cos_t + vx * sin_t);
+        let wy = cy + r_m * (uy * cos_t + vy * sin_t);
+        let wz = cz + r_m * (uz * cos_t + vz * sin_t);
 
         // dl vector (tangent to loop)
-        let dlx = -r_m * theta_mid.sin() * dtheta;
-        let dly = r_m * theta_mid.cos() * dtheta;
-        let dlz = 0.0;
+        let dlx = r_m * dtheta * (-ux * sin_t + vx * cos_t);
+        let dly = r_m * dtheta * (-uy * sin_t + vy * cos_t);
+        let dlz = r_m * dtheta * (-uz * sin_t + vz * cos_t);
 
         // Vector from wire element to field point
         let rx = px - wx;
@@ -169,13 +197,13 @@ fn biot_savart_loop(loop_: &CurrentLoop, point: [f64; 3], num_segments: usize) -
             continue;
         }
 
-        // dl × r̂
+        // dl × r
         let r3 = r_mag * r_mag * r_mag;
         let cross_x = dly * rz - dlz * ry;
         let cross_y = dlz * rx - dlx * rz;
         let cross_z = dlx * ry - dly * rx;
 
-        // dB = (μ₀/4π) * I * (dl × r) / r³
+        // dB = (mu_0/4pi) * I * (dl x r) / r^3
         let factor = MU0 / (4.0 * PI) * loop_.ampere_turns / r3;
 
         b[0] += factor * cross_x;
@@ -228,6 +256,14 @@ impl PointMeasurement {
 }
 
 #[derive(Clone, Debug)]
+pub struct ProbeStatistics {
+    pub min: f32,
+    pub max: f32,
+    pub mean: f32,
+    pub std: f32,
+}
+
+#[derive(Clone, Debug)]
 pub struct LineMeasurement {
     pub name: String,
     pub start: [f64; 3],
@@ -235,6 +271,7 @@ pub struct LineMeasurement {
     pub positions: Vec<f32>,
     pub values: Vec<f32>,
     pub magnitudes: Vec<f32>,
+    pub statistics: Option<ProbeStatistics>,
 }
 
 impl LineMeasurement {
@@ -261,6 +298,18 @@ impl LineMeasurement {
         let name_bytes = self.name.as_bytes();
         data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
         data.extend_from_slice(name_bytes);
+        match &self.statistics {
+            Some(stats) => {
+                data.push(1);
+                data.extend_from_slice(&stats.min.to_le_bytes());
+                data.extend_from_slice(&stats.max.to_le_bytes());
+                data.extend_from_slice(&stats.mean.to_le_bytes());
+                data.extend_from_slice(&stats.std.to_le_bytes());
+            }
+            None => {
+                data.push(0);
+            }
+        }
         data
     }
 }
@@ -702,5 +751,41 @@ mod tests {
         assert_eq!(Colormap::from_str("VIRIDIS"), Colormap::Viridis);
         assert_eq!(Colormap::from_str("plasma"), Colormap::Plasma);
         assert_eq!(Colormap::from_str("unknown"), Colormap::Jet);
+    }
+
+    #[test]
+    fn test_x_aligned_loop_field_at_center() {
+        let radius_mm = 50.0;
+        let radius_m = radius_mm * 1e-3;
+        let current = 1.0;
+
+        let loop_ = CurrentLoop {
+            center: [0.0, 0.0, 0.0],
+            radius: radius_mm,
+            normal: [1.0, 0.0, 0.0],
+            ampere_turns: current,
+        };
+        let b = biot_savart_loop(&loop_, [0.0, 0.0, 0.0], 256);
+
+        let expected_bx = MU0 * current / (2.0 * radius_m);
+
+        let rel_error = (b[0] - expected_bx).abs() / expected_bx;
+        assert!(
+            rel_error < 0.01,
+            "Bx error too large: got {:.6e}, expected {:.6e}, rel_error = {:.4}",
+            b[0],
+            expected_bx,
+            rel_error
+        );
+        assert!(
+            b[1].abs() < 1e-12,
+            "By should be zero at center, got {}",
+            b[1]
+        );
+        assert!(
+            b[2].abs() < 1e-12,
+            "Bz should be zero at center, got {}",
+            b[2]
+        );
     }
 }

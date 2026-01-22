@@ -4,32 +4,27 @@ ScriptKitty v0.0.12 - Prioritized implementation backlog (2026-01-22).
 
 # Very High Priority
 
-### NanoVNA Full 3D EMF Simulation
-Current `nanovna.rs` uses Wheeler formula approximation (lumped parameter model) with no connection to actual geometry. It produces plausible-looking S11 curves but no resonance peaks from actual Loop Gap Resonator coupling.
+### NanoVNA Coupled Resonator Simulation
+Current `nanovna.rs` uses Wheeler formula with frequency-dependent corrections. Still no connection to actual geometry for inductance computation.
 
-**Current Implementation (What Exists):**
-- Wheeler formula + Nagaoka correction for inductance: `L = μ₀·N²·A·K / length`
-- Pure series RLC impedance: `Z = R + jωL` (DC resistance only)
-- S11 conversion: `(Z - Z₀)/(Z + Z₀)` where Z₀ = 50Ω
+**Now Implemented:**
+- Wheeler formula + Nagaoka correction for inductance
+- Skin effect: `R_ac = R_dc·√(1 + (ω/ω_skin)²)` for frequency-dependent resistance
+- Parasitic capacitance between turns (Medhurst approximation)
+- Self-resonant frequency (SRF) calculation: `f_SRF = 1/(2π√(LC_parasitic))`
+- S11 conversion with frequency-dependent impedance
 
-**Hardcoded Approximations (What's Wrong):**
-- Assumes uniform wire diameter/spacing (no actual geometry)
-- Frequency-independent resistance (ignores skin effect >1 MHz)
-- No parasitic capacitance between turns
+**Still Missing:**
 - No mutual inductance M between drive coil and resonator gap
-- No self-resonance frequency (SRF) calculation
+- No geometry-aware inductance (reads hardcoded params, not actual mesh)
 - No sample environment coupling (biological tissue ε_r ≈ 80)
 
-**Missing Connection:** The Biot-Savart computation for magnetic field (working in `field.rs`) could be repurposed to derive L and M from actual geometry, but currently NanoVNA reads from separate `NanoVNA` Lua global with hardcoded parameters.
-
-**Implementation Roadmap:**
-1. **Geometry-Aware Inductance**: Extract coil coordinates, compute self-inductance from field energy `L = 2W_m/I²`
+**Remaining Roadmap:**
+1. **Geometry-Aware Inductance**: Extract coil coordinates from mesh, compute L from field energy `L = 2W_m/I²`
 2. **Mutual Inductance**: Compute M between drive coil and resonator gap via B-field integration
-3. **Frequency Effects**: Add skin effect `R_ac = R_dc·√(1 + (ω/ω_skin)²)`, parasitic capacitance
-4. **Coupled Impedance**: `Z_in = jωL_drive + (ωM)²/(R_load + jωL_load)` for S11 with sharp Q peaks
-5. **Validation**: Compare simulation against real NanoVNA measurements
+3. **Coupled Impedance**: `Z_in = jωL_drive + (ωM)²/(R_load + jωL_load)` for S11 with sharp Q peaks
 
-Files: `server/src/nanovna.rs`, `server/src/main.rs`, `server/src/field.rs`
+Files: `server/src/nanovna.rs`, `server/src/main.rs`
 
 # High Priority
 
@@ -46,15 +41,33 @@ Files: `server/src/circuit.rs`
 
 # Low Priority
 
-### Probe Volume Statistics (Dead Code)
-`stdlib/instruments/init.lua:71` accepts `statistics` config parameter but backend ignores it.
-- Parameter is passed through to serialized config but `server/src/main.rs` never reads it
-- Options: Remove unused parameter OR implement statistics computation in backend
-- If implemented: Could compute min/max/mean/std over line or volume probe samples
-
 # ===
 
 ## Recently Fixed (2026-01-22)
+
+### NanoVNA Frequency-Dependent Effects
+Added realistic RF behavior to coil impedance model.
+- Skin effect resistance: `R_ac = R_dc·√(1 + (ω/ω_skin)²)`
+- Parasitic capacitance via Medhurst approximation
+- Self-resonant frequency calculation
+- File: `server/src/nanovna.rs`
+
+### Non-Z-Aligned Coil Support
+Field computation now supports arbitrarily oriented coils.
+- Biot-Savart integration works for any coil axis orientation
+- File: `server/src/field.rs`
+
+### Group Bounds Recalculation on Remove
+Fixed bounds not updating when children removed from groups.
+- `remove()` now triggers bounds recalculation
+- File: `stdlib/groups.lua`
+
+### Probe Volume Statistics
+Implemented statistics computation for line probes when `statistics` parameter is specified.
+- `server/src/field.rs`: Added `ProbeStatistics` struct with min/max/mean/std fields
+- `server/src/field.rs`: Added `statistics: Option<ProbeStatistics>` field to `LineMeasurement`
+- `server/src/field.rs`: Updated `to_binary()` to serialize statistics (1-byte flag + 4x f32 if present)
+- `server/src/main.rs`: `try_compute_probe_measurements()` now checks for `statistics` config and computes values
 
 ### Mesh Validation
 Added mesh validation functions to detect common geometry issues.

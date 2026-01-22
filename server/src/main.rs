@@ -586,6 +586,23 @@ fn try_compute_probe_measurements(lua: &mlua::Lua, content: &str) -> Vec<field::
             magnitudes.push(magnitude as f32);
         }
 
+        let statistics = if config_table.get::<_, mlua::Table>("statistics").is_ok() {
+            let n = magnitudes.len() as f32;
+            let sum: f32 = magnitudes.iter().sum();
+            let mean = sum / n;
+            let variance: f32 = magnitudes.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n;
+            let std = variance.sqrt();
+            let min = magnitudes.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max = magnitudes.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            info!(
+                "Probe '{}' statistics: min={:.4}, max={:.4}, mean={:.4}, std={:.4}",
+                name, min, max, mean, std
+            );
+            Some(field::ProbeStatistics { min, max, mean, std })
+        } else {
+            None
+        };
+
         info!(
             "Probe '{}': {} points from ({:.1}, {:.1}, {:.1}) to ({:.1}, {:.1}, {:.1})",
             name, num_points, start[0], start[1], start[2], stop[0], stop[1], stop[2]
@@ -598,6 +615,7 @@ fn try_compute_probe_measurements(lua: &mlua::Lua, content: &str) -> Vec<field::
             positions,
             values,
             magnitudes,
+            statistics,
         });
     }
 
@@ -854,6 +872,10 @@ fn try_compute_nanovna_sweep(lua: &mlua::Lua, content: &str) -> Option<nanovna::
         num_turns,
         wire_diameter,
         coil_resistance,
+        parasitic_capacitance_pf: None,
+        resonator_radius: None,
+        resonator_distance: 10.0,
+        resonator_resistance: 0.1,
     };
 
     info!(
@@ -917,6 +939,10 @@ fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<circuit::Circu
                             num_turns: nanovna_table.get("num_turns").unwrap_or(10),
                             wire_diameter: nanovna_table.get("wire_diameter").unwrap_or(0.5),
                             coil_resistance: nanovna_table.get("coil_resistance").unwrap_or(0.5),
+                            parasitic_capacitance_pf: None,
+                            resonator_radius: None,
+                            resonator_distance: 10.0,
+                            resonator_resistance: 0.1,
                         };
                         let (z_real, z_imag) = nanovna::compute_impedance_at_frequency(&nanovna_config, frequency);
                         info!("MatchingNetwork using NanoVNA impedance at {:.2} MHz: Z = {:.2} + j{:.2} Ohm", frequency / 1e6, z_real, z_imag);

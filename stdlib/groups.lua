@@ -133,6 +133,18 @@ function Groups.group(name, children)
           break
         end
       end
+      -- Recalculate bounds from remaining children
+      local min_bounds = {math.huge, math.huge, math.huge}
+      local max_bounds = {-math.huge, -math.huge, -math.huge}
+      for _, child in ipairs(self._children) do
+        if child._bounds then
+          for i = 1, 3 do
+            min_bounds[i] = math.min(min_bounds[i], child._bounds.min[i])
+            max_bounds[i] = math.max(max_bounds[i], child._bounds.max[i])
+          end
+        end
+      end
+      self._bounds = {min = min_bounds, max = max_bounds}
       return self
     end,
 

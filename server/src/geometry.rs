@@ -669,8 +669,25 @@ pub fn build_object_manifold(table: &mlua::Table, circular_segments: u32) -> Res
     build_mesh_recursive(table, circular_segments)
 }
 
+/// Build mesh from a serialized object using Manifold, with optional degenerate triangle removal
+pub fn build_object_manifold_clean(table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
+    let mut mesh = build_mesh_recursive(table, circular_segments)?;
+    if remove_degenerates {
+        let removed = remove_degenerate_triangles(&mut mesh);
+        if removed > 0 {
+            tracing::debug!("Removed {} degenerate triangles", removed);
+        }
+    }
+    Ok(mesh)
+}
+
 /// Generate mesh from Lua scene using Manifold backend
 pub fn generate_mesh_from_lua_manifold(_lua: &Lua, value: &Value, circular_segments: u32) -> Result<MeshData> {
+    generate_mesh_from_lua_manifold_clean(_lua, value, circular_segments, false)
+}
+
+/// Generate mesh from Lua scene using Manifold backend, with optional degenerate triangle removal
+pub fn generate_mesh_from_lua_manifold_clean(_lua: &Lua, value: &Value, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
     let table = value.as_table().ok_or_else(|| anyhow!("Expected table"))?;
     let objects: mlua::Table = table.get("objects")?;
 
@@ -686,7 +703,14 @@ pub fn generate_mesh_from_lua_manifold(_lua: &Lua, value: &Value, circular_segme
         return Err(anyhow!("No objects in scene"));
     }
 
-    Ok(combine_meshes(meshes))
+    let mut combined = combine_meshes(meshes);
+    if remove_degenerates {
+        let removed = remove_degenerate_triangles(&mut combined);
+        if removed > 0 {
+            tracing::debug!("Removed {} degenerate triangles from scene", removed);
+        }
+    }
+    Ok(combined)
 }
 
 /// Generate mesh from a single serialized object using Manifold
@@ -694,8 +718,67 @@ pub fn generate_mesh_from_object_manifold(_lua: &Lua, table: &mlua::Table, circu
     build_object_manifold(table, circular_segments)
 }
 
+/// Generate mesh from a single serialized object using Manifold, with optional degenerate triangle removal
+pub fn generate_mesh_from_object_manifold_clean(_lua: &Lua, table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
+    build_object_manifold_clean(table, circular_segments, remove_degenerates)
+}
+
 // ===========================
-// Mesh Validation
+// Mesh Validation and Cleanup
+
+/// Remove degenerate triangles (zero area) from a mesh
+/// Returns the count of removed triangles
+pub fn remove_degenerate_triangles(mesh: &mut MeshData) -> usize {
+    let num_vertices = mesh.positions.len() / 3;
+    let num_tris = mesh.indices.len() / 3;
+    let mut valid_indices = Vec::with_capacity(mesh.indices.len());
+    let mut removed = 0;
+
+    for tri in 0..num_tris {
+        let base = tri * 3;
+        let i0 = mesh.indices[base] as usize;
+        let i1 = mesh.indices[base + 1] as usize;
+        let i2 = mesh.indices[base + 2] as usize;
+
+        // Skip if any index is out of bounds
+        if i0 >= num_vertices || i1 >= num_vertices || i2 >= num_vertices {
+            removed += 1;
+            continue;
+        }
+
+        let v0 = [
+            mesh.positions[i0 * 3],
+            mesh.positions[i0 * 3 + 1],
+            mesh.positions[i0 * 3 + 2],
+        ];
+        let v1 = [
+            mesh.positions[i1 * 3],
+            mesh.positions[i1 * 3 + 1],
+            mesh.positions[i1 * 3 + 2],
+        ];
+        let v2 = [
+            mesh.positions[i2 * 3],
+            mesh.positions[i2 * 3 + 1],
+            mesh.positions[i2 * 3 + 2],
+        ];
+
+        let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let normal = cross(edge1, edge2);
+        let area_sq = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+
+        if area_sq < 1e-12 {
+            removed += 1;
+        } else {
+            valid_indices.push(mesh.indices[base]);
+            valid_indices.push(mesh.indices[base + 1]);
+            valid_indices.push(mesh.indices[base + 2]);
+        }
+    }
+
+    mesh.indices = valid_indices;
+    removed
+}
 
 /// Validation result with warnings
 pub struct MeshValidation {
@@ -872,5 +955,85 @@ mod tests {
         };
         let result = validate_mesh(&mesh);
         assert!(!result.valid, "Mesh with out-of-bounds index should fail");
+    }
+
+    #[test]
+    fn test_remove_degenerate_triangles() {
+        // Create mesh with 3 triangles: 1 valid, 2 degenerate
+        // 6 vertices total
+        let mut mesh = MeshData {
+            positions: vec![
+                // Valid triangle vertices (0, 1, 2)
+                0.0, 0.0, 0.0,
+                10.0, 0.0, 0.0,
+                5.0, 10.0, 10.0,
+                // Degenerate triangle 1: all same point (3, 4, 5)
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+            ],
+            normals: vec![
+                0.0, 0.0, 1.0,
+                0.0, 0.0, 1.0,
+                0.0, 0.0, 1.0,
+                0.0, 0.0, 1.0,
+                0.0, 0.0, 1.0,
+                0.0, 0.0, 1.0,
+            ],
+            colors: vec![
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+                1.0, 1.0, 1.0,
+            ],
+            // Triangle 1: valid (0,1,2), Triangle 2: degenerate (3,4,5), Triangle 3: collinear (0,0,1)
+            indices: vec![0, 1, 2, 3, 4, 5, 0, 0, 1],
+        };
+
+        let original_tri_count = mesh.indices.len() / 3;
+        assert_eq!(original_tri_count, 3);
+
+        let removed = remove_degenerate_triangles(&mut mesh);
+
+        assert_eq!(removed, 2, "Should remove 2 degenerate triangles");
+        assert_eq!(mesh.indices.len(), 3, "Should have 3 indices left (1 triangle)");
+        assert_eq!(mesh.indices, vec![0, 1, 2], "Valid triangle should remain");
+    }
+
+    #[test]
+    fn test_remove_degenerate_triangles_all_valid() {
+        let mut mesh = MeshData {
+            positions: vec![
+                0.0, 0.0, 0.0,
+                10.0, 0.0, 0.0,
+                5.0, 10.0, 10.0,
+            ],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            indices: vec![0, 1, 2],
+        };
+
+        let removed = remove_degenerate_triangles(&mut mesh);
+
+        assert_eq!(removed, 0, "No triangles should be removed");
+        assert_eq!(mesh.indices.len(), 3, "Should still have 3 indices");
+    }
+
+    #[test]
+    fn test_remove_degenerate_triangles_out_of_bounds() {
+        let mut mesh = MeshData {
+            positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0, 1.0],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            indices: vec![0, 1, 2, 0, 1, 99], // Second triangle has out-of-bounds index
+        };
+
+        let removed = remove_degenerate_triangles(&mut mesh);
+
+        assert_eq!(removed, 1, "Out-of-bounds triangle should be removed");
+        assert_eq!(mesh.indices.len(), 3, "Should have 3 indices left");
+        assert_eq!(mesh.indices, vec![0, 1, 2]);
     }
 }

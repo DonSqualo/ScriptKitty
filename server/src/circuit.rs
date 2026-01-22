@@ -264,6 +264,108 @@ pub fn generate_circuit_svg(components: &[CircuitComponent], width: f64, height:
 
 // ===========================
 
+pub struct CircuitAnalysis {
+    pub frequency: f64,
+    pub input_impedance: (f64, f64),
+    pub output_impedance: (f64, f64),
+    pub voltage_gain_db: f64,
+    pub power_transfer_efficiency: f64,
+    pub s11_db: f64,
+}
+
+fn complex_add(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 + b.0, a.1 + b.1)
+}
+
+fn complex_sub(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 - b.0, a.1 - b.1)
+}
+
+fn complex_mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+
+fn complex_div(num: (f64, f64), den: (f64, f64)) -> (f64, f64) {
+    let den_mag_sq = den.0 * den.0 + den.1 * den.1;
+    let real = (num.0 * den.0 + num.1 * den.1) / den_mag_sq;
+    let imag = (num.1 * den.0 - num.0 * den.1) / den_mag_sq;
+    (real, imag)
+}
+
+fn complex_mag(z: (f64, f64)) -> f64 {
+    (z.0 * z.0 + z.1 * z.1).sqrt()
+}
+
+fn complex_parallel(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    let num = complex_mul(a, b);
+    let den = complex_add(a, b);
+    complex_div(num, den)
+}
+
+pub fn analyze_circuit_ac(components: &[CircuitComponent], frequency: f64) -> CircuitAnalysis {
+    let omega = 2.0 * PI * frequency;
+    let z_source = 50.0;
+
+    let mut z_load = (50.0, 0.0);
+    for comp in components.iter().rev() {
+        if let CircuitComponent::TransducerLoad { impedance_real, impedance_imag } = comp {
+            z_load = (*impedance_real, *impedance_imag);
+            break;
+        }
+    }
+
+    let mut z_current = z_load;
+
+    for comp in components.iter().rev() {
+        match comp {
+            CircuitComponent::MatchingNetwork { impedance_real, impedance_imag, frequency: match_freq } => {
+                let match_omega = 2.0 * PI * match_freq;
+                let l_value = impedance_imag.abs() / match_omega;
+                let c_value = 1.0 / (match_omega * impedance_real);
+
+                let x_l = omega * l_value;
+                let x_c = -1.0 / (omega * c_value);
+
+                let z_c = (0.0, x_c);
+                let z_parallel = complex_parallel(z_current, z_c);
+
+                z_current = (z_parallel.0, z_parallel.1 + x_l);
+            }
+            CircuitComponent::TransducerLoad { .. } => {}
+            CircuitComponent::Amplifier { .. } | CircuitComponent::SignalGenerator { .. } => {}
+        }
+    }
+
+    let z_in = z_current;
+
+    let s11_num = complex_sub(z_in, (z_source, 0.0));
+    let s11_den = complex_add(z_in, (z_source, 0.0));
+    let s11 = complex_div(s11_num, s11_den);
+    let s11_mag = complex_mag(s11);
+    let s11_db = 20.0 * s11_mag.log10();
+
+    let power_transfer = 1.0 - s11_mag * s11_mag;
+
+    let mut voltage_gain = 1.0;
+    for comp in components {
+        if let CircuitComponent::Amplifier { gain } = comp {
+            voltage_gain *= gain;
+        }
+    }
+    let voltage_gain_db = 20.0 * voltage_gain.log10();
+
+    CircuitAnalysis {
+        frequency,
+        input_impedance: z_in,
+        output_impedance: z_load,
+        voltage_gain_db,
+        power_transfer_efficiency: power_transfer,
+        s11_db,
+    }
+}
+
+// ===========================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +586,46 @@ mod tests {
 
         let wire_count = result.svg.matches(&format!("stroke=\"{}\"", WIRE)).count();
         assert!(wire_count >= 2, "Should have wire connections between components and ground");
+    }
+
+    #[test]
+    fn test_analyze_circuit_ac_matched_load() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+            CircuitComponent::TransducerLoad { impedance_real: 50.0, impedance_imag: 0.0 },
+        ];
+
+        let analysis = analyze_circuit_ac(&components, 1e6);
+
+        assert!((analysis.input_impedance.0 - 50.0).abs() < 1e-6);
+        assert!(analysis.input_impedance.1.abs() < 1e-6);
+        assert!(analysis.s11_db < -40.0);
+        assert!((analysis.power_transfer_efficiency - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_analyze_circuit_ac_with_amplifier_gain() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+            CircuitComponent::Amplifier { gain: 10.0 },
+            CircuitComponent::TransducerLoad { impedance_real: 50.0, impedance_imag: 0.0 },
+        ];
+
+        let analysis = analyze_circuit_ac(&components, 1e6);
+
+        assert!((analysis.voltage_gain_db - 20.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_analyze_circuit_ac_mismatched_load_reflection() {
+        let components = vec![
+            CircuitComponent::SignalGenerator { frequency: 1e6, amplitude: 1.0 },
+            CircuitComponent::TransducerLoad { impedance_real: 200.0, impedance_imag: 0.0 },
+        ];
+
+        let analysis = analyze_circuit_ac(&components, 1e6);
+
+        assert!(analysis.s11_db > -10.0);
+        assert!(analysis.power_transfer_efficiency < 0.7);
     }
 }
