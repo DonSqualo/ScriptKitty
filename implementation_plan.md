@@ -46,10 +46,11 @@ Files: `server/src/circuit.rs`
 
 # Low Priority
 
-### Probe Volume Statistics
-`Instruments/init.lua:71` has `statistics` config parameter but unclear what's computed.
-- No documentation of min/max/mean/std statistics for volume probes
-- Volume probe API exists but backend behavior undocumented
+### Probe Volume Statistics (Dead Code)
+`stdlib/instruments/init.lua:71` accepts `statistics` config parameter but backend ignores it.
+- Parameter is passed through to serialized config but `server/src/main.rs` never reads it
+- Options: Remove unused parameter OR implement statistics computation in backend
+- If implemented: Could compute min/max/mean/std over line or volume probe samples
 
 # ===
 
