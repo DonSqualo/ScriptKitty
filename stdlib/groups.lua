@@ -188,6 +188,29 @@ function Groups.assembly(name, children, metadata)
   asm._type = "assembly"
   asm._metadata = metadata or {}
   asm._metadata.created = os.date("%Y-%m-%d %H:%M:%S")
+
+  -- Override serialize to return type="assembly"
+  local mt = getmetatable(asm)
+  mt.__index.serialize = function(self)
+    local children_serialized = {}
+    for i, child in ipairs(self._children) do
+      if child.serialize then
+        children_serialized[i] = child:serialize()
+      end
+    end
+    return {
+      type = "assembly",
+      name = self._name,
+      children = children_serialized,
+      ops = self._ops,
+      material = self._material,
+      color = self._color,
+      visible = self._visible,
+      locked = self._locked,
+      metadata = self._metadata
+    }
+  end
+
   return asm
 end
 
@@ -200,8 +223,29 @@ function Groups.component(name, children)
   comp._type = "component"
   comp._instances = {}
 
+  -- Override serialize to return type="component"
+  local mt = getmetatable(comp)
+  mt.__index.serialize = function(self)
+    local children_serialized = {}
+    for i, child in ipairs(self._children) do
+      if child.serialize then
+        children_serialized[i] = child:serialize()
+      end
+    end
+    return {
+      type = "component",
+      name = self._name,
+      children = children_serialized,
+      ops = self._ops,
+      material = self._material,
+      color = self._color,
+      visible = self._visible,
+      locked = self._locked
+    }
+  end
+
   -- Add instance method
-  getmetatable(comp).__index.instance = function(self)
+  mt.__index.instance = function(self)
     local inst = {
       _type = "instance",
       _component = self._name,

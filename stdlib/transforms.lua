@@ -139,17 +139,19 @@ Transforms.Mat4 = Mat4
 function Transforms.translate(shape, x, y, z)
   local new_shape = {}
   for k, v in pairs(shape) do
-    new_shape[k] = v
+    if k == "_ops" then
+      -- Deep copy ops array
+      new_shape[k] = {}
+      for i, op in ipairs(v) do
+        new_shape[k][i] = op
+      end
+    else
+      new_shape[k] = v
+    end
   end
-  new_shape._transform = {
-    position = {
-      shape._transform.position[1] + x,
-      shape._transform.position[2] + y,
-      shape._transform.position[3] + z
-    },
-    rotation = shape._transform.rotation,
-    scale = shape._transform.scale
-  }
+  -- Initialize _ops if not present
+  new_shape._ops = new_shape._ops or {}
+  table.insert(new_shape._ops, {op = "translate", x = x, y = y, z = z})
   setmetatable(new_shape, getmetatable(shape))
   return new_shape
 end
@@ -163,17 +165,19 @@ end
 function Transforms.rotate(shape, rx, ry, rz)
   local new_shape = {}
   for k, v in pairs(shape) do
-    new_shape[k] = v
+    if k == "_ops" then
+      -- Deep copy ops array
+      new_shape[k] = {}
+      for i, op in ipairs(v) do
+        new_shape[k][i] = op
+      end
+    else
+      new_shape[k] = v
+    end
   end
-  new_shape._transform = {
-    position = shape._transform.position,
-    rotation = {
-      shape._transform.rotation[1] + rx,
-      shape._transform.rotation[2] + ry,
-      shape._transform.rotation[3] + rz
-    },
-    scale = shape._transform.scale
-  }
+  -- Initialize _ops if not present
+  new_shape._ops = new_shape._ops or {}
+  table.insert(new_shape._ops, {op = "rotate", x = rx, y = ry, z = rz})
   setmetatable(new_shape, getmetatable(shape))
   return new_shape
 end
@@ -189,17 +193,19 @@ function Transforms.scale(shape, sx, sy, sz)
   sz = sz or sx
   local new_shape = {}
   for k, v in pairs(shape) do
-    new_shape[k] = v
+    if k == "_ops" then
+      -- Deep copy ops array
+      new_shape[k] = {}
+      for i, op in ipairs(v) do
+        new_shape[k][i] = op
+      end
+    else
+      new_shape[k] = v
+    end
   end
-  new_shape._transform = {
-    position = shape._transform.position,
-    rotation = shape._transform.rotation,
-    scale = {
-      shape._transform.scale[1] * sx,
-      shape._transform.scale[2] * sy,
-      shape._transform.scale[3] * sz
-    }
-  }
+  -- Initialize _ops if not present
+  new_shape._ops = new_shape._ops or {}
+  table.insert(new_shape._ops, {op = "scale", x = sx, y = sy, z = sz})
   setmetatable(new_shape, getmetatable(shape))
   return new_shape
 end

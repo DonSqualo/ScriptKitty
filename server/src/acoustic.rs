@@ -189,6 +189,83 @@ pub fn compute_acoustic_field(
         .map(|&m| (m * norm_factor) as f32)
         .collect();
 
+    // Compute 3D arrow field for acoustic visualization
+    let arrow_grid = 10;
+    let mut arrows_positions = Vec::new();
+    let mut arrows_vectors = Vec::new();
+    let mut arrows_magnitudes = Vec::new();
+
+    let arrow_extent = config.medium_radius * 0.9;
+    let arrow_z_extent = config.medium_height * 0.9;
+
+    for k in 0..arrow_grid {
+        let z = (k as f64 + 0.5) * arrow_z_extent / arrow_grid as f64;
+        for j in 0..arrow_grid {
+            let y = -arrow_extent + (j as f64 + 0.5) * 2.0 * arrow_extent / arrow_grid as f64;
+            for i in 0..arrow_grid {
+                let x = -arrow_extent + (i as f64 + 0.5) * 2.0 * arrow_extent / arrow_grid as f64;
+
+                let r = (x * x + y * y).sqrt();
+                let (p_real, p_imag) = compute_pressure_at_point(r, z, config);
+                let mag = (p_real * p_real + p_imag * p_imag).sqrt();
+
+                if mag > 1e-10 {
+                    arrows_positions.push(x as f32);
+                    arrows_positions.push(y as f32);
+                    arrows_positions.push(z as f32);
+
+                    // For acoustic field, the main propagation direction is along Z
+                    // Use gradient direction for vector field visualization
+                    let dz = 0.1;
+                    let (p_real_up, p_imag_up) = compute_pressure_at_point(r, z + dz, config);
+                    let mag_up = (p_real_up * p_real_up + p_imag_up * p_imag_up).sqrt();
+                    let grad_z = (mag_up - mag) / dz;
+
+                    // Radial gradient
+                    let dr = 0.1;
+                    let (p_real_r, p_imag_r) = compute_pressure_at_point(r + dr, z, config);
+                    let mag_r = (p_real_r * p_real_r + p_imag_r * p_imag_r).sqrt();
+                    let grad_r = if r > 1e-6 { (mag_r - mag) / dr } else { 0.0 };
+
+                    // Convert radial gradient to Cartesian
+                    let (grad_x, grad_y) = if r > 1e-6 {
+                        (grad_r * x / r, grad_r * y / r)
+                    } else {
+                        (0.0, 0.0)
+                    };
+
+                    let grad_mag = (grad_x * grad_x + grad_y * grad_y + grad_z * grad_z).sqrt();
+                    if grad_mag > 1e-10 {
+                        arrows_vectors.push((grad_x / grad_mag) as f32);
+                        arrows_vectors.push((grad_y / grad_mag) as f32);
+                        arrows_vectors.push((grad_z / grad_mag) as f32);
+                    } else {
+                        // Default to +Z direction
+                        arrows_vectors.push(0.0);
+                        arrows_vectors.push(0.0);
+                        arrows_vectors.push(1.0);
+                    }
+
+                    arrows_magnitudes.push((mag * norm_factor) as f32);
+                }
+            }
+        }
+    }
+
+    // Compute 1D line along Z axis (r=0)
+    let line_points = 101;
+    let mut line_z = Vec::with_capacity(line_points);
+    let mut line_bz = Vec::with_capacity(line_points);
+
+    for i in 0..line_points {
+        let z = i as f64 * config.medium_height / (line_points - 1) as f64;
+        let (p_real, p_imag) = compute_pressure_at_point(0.0, z, config);
+        let mag = (p_real * p_real + p_imag * p_imag).sqrt();
+
+        line_z.push(z as f32);
+        line_bz.push((mag * norm_factor) as f32);
+    }
+
     FieldData {
         plane_type: plane,
         colormap,
@@ -199,11 +276,11 @@ pub fn compute_acoustic_field(
         slice_bx,
         slice_bz,
         slice_magnitude,
-        arrows_positions: Vec::new(),
-        arrows_vectors: Vec::new(),
-        arrows_magnitudes: Vec::new(),
-        line_z: Vec::new(),
-        line_bz: Vec::new(),
+        arrows_positions,
+        arrows_vectors,
+        arrows_magnitudes,
+        line_z,
+        line_bz,
     }
 }
 

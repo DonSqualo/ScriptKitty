@@ -6,6 +6,7 @@ use manifold3d::types::{Matrix4x3, PositiveF64, PositiveI32, Vec3};
 use manifold3d::{Manifold, MeshGL};
 use mlua::{Lua, Value};
 use std::alloc::{alloc, Layout};
+use std::collections::HashMap;
 use std::os::raw::c_void;
 
 /// Mesh data for WebSocket transfer
@@ -360,6 +361,14 @@ fn apply_manifold_ops(manifold: Manifold, table: &mlua::Table) -> Result<Manifol
 }
 
 fn build_manifold_object(table: &mlua::Table, circular_segments: u32) -> Result<Manifold> {
+    build_manifold_object_with_components(table, circular_segments, &std::collections::HashMap::new())
+}
+
+fn build_manifold_object_with_components(
+    table: &mlua::Table,
+    circular_segments: u32,
+    components: &std::collections::HashMap<String, mlua::Table>,
+) -> Result<Manifold> {
     let obj_type: String = table.get("type")?;
     let name: String = table.get("name").unwrap_or_default();
     tracing::debug!("Building manifold object: type={}, name={}", obj_type, name);
@@ -369,11 +378,11 @@ fn build_manifold_object(table: &mlua::Table, circular_segments: u32) -> Result<
         let children: mlua::Table = table.get("children")?;
 
         let first_child: mlua::Table = children.get(1)?;
-        let mut result = build_manifold_object(&first_child, circular_segments)?;
+        let mut result = build_manifold_object_with_components(&first_child, circular_segments, components)?;
 
         for i in 2..=children.len()? {
             let child: mlua::Table = children.get(i)?;
-            let child_manifold = build_manifold_object(&child, circular_segments)?;
+            let child_manifold = build_manifold_object_with_components(&child, circular_segments, components)?;
             result = match operation.as_str() {
                 "union" => result.union(&child_manifold),
                 "difference" => result.difference(&child_manifold),
@@ -383,20 +392,47 @@ fn build_manifold_object(table: &mlua::Table, circular_segments: u32) -> Result<
         }
 
         apply_manifold_ops(result, table)
-    } else if obj_type == "group" {
+    } else if obj_type == "group" || obj_type == "assembly" {
+        // Groups and assemblies are handled the same way: union of children
         let children: mlua::Table = table.get("children")?;
         let mut result: Option<Manifold> = None;
 
         for pair in children.pairs::<i64, mlua::Table>() {
             let (_, child) = pair?;
-            let child_manifold = build_manifold_object(&child, circular_segments)?;
+            let child_manifold = build_manifold_object_with_components(&child, circular_segments, components)?;
             result = Some(match result {
                 Some(r) => r.union(&child_manifold),
                 None => child_manifold,
             });
         }
 
-        let manifold = result.ok_or_else(|| anyhow!("Empty group"))?;
+        let manifold = result.ok_or_else(|| anyhow!("Empty group/assembly"))?;
+        apply_manifold_ops(manifold, table)
+    } else if obj_type == "component" {
+        // Components are similar to groups but can be instanced
+        let children: mlua::Table = table.get("children")?;
+        let mut result: Option<Manifold> = None;
+
+        for pair in children.pairs::<i64, mlua::Table>() {
+            let (_, child) = pair?;
+            let child_manifold = build_manifold_object_with_components(&child, circular_segments, components)?;
+            result = Some(match result {
+                Some(r) => r.union(&child_manifold),
+                None => child_manifold,
+            });
+        }
+
+        let manifold = result.ok_or_else(|| anyhow!("Empty component"))?;
+        apply_manifold_ops(manifold, table)
+    } else if obj_type == "instance" {
+        // Instances reference a component by name and apply transforms
+        let component_name: String = table.get("component")?;
+        let component = components.get(&component_name)
+            .ok_or_else(|| anyhow!("Component '{}' not found for instance", component_name))?;
+
+        // Build the component's geometry
+        let manifold = build_manifold_object_with_components(component, circular_segments, components)?;
+        // Apply the instance's transforms
         apply_manifold_ops(manifold, table)
     } else {
         let params: mlua::Table = table.get("params")?;
@@ -454,20 +490,29 @@ fn combine_meshes(meshes: Vec<MeshData>) -> MeshData {
 
 /// Recursively build mesh preserving per-object colors
 fn build_mesh_recursive(table: &mlua::Table, circular_segments: u32) -> Result<MeshData> {
+    build_mesh_recursive_with_components(table, circular_segments, &HashMap::new())
+}
+
+fn build_mesh_recursive_with_components(
+    table: &mlua::Table,
+    circular_segments: u32,
+    components: &HashMap<String, mlua::Table>,
+) -> Result<MeshData> {
     let obj_type: String = table.get("type")?;
 
-    if obj_type == "group" {
+    if obj_type == "group" || obj_type == "assembly" || obj_type == "component" {
+        // Groups, assemblies, and components all union their children
         let children: mlua::Table = table.get("children")?;
         let mut child_meshes = Vec::new();
 
         for pair in children.pairs::<i64, mlua::Table>() {
             let (_, child) = pair?;
-            let child_mesh = build_mesh_recursive(&child, circular_segments)?;
+            let child_mesh = build_mesh_recursive_with_components(&child, circular_segments, components)?;
             child_meshes.push(child_mesh);
         }
 
         let mut combined = if child_meshes.is_empty() {
-            return Err(anyhow!("Empty group"));
+            return Err(anyhow!("Empty group/assembly/component"));
         } else {
             combine_meshes(child_meshes)
         };
@@ -483,6 +528,21 @@ fn build_mesh_recursive(table: &mlua::Table, circular_segments: u32) -> Result<M
         }
 
         Ok(combined)
+    } else if obj_type == "instance" {
+        // Instances reference a component by name and apply transforms
+        let component_name: String = table.get("component")?;
+        let component = components.get(&component_name)
+            .ok_or_else(|| anyhow!("Component '{}' not found for instance", component_name))?;
+
+        // Build the component's geometry
+        let mut mesh = build_mesh_recursive_with_components(component, circular_segments, components)?;
+
+        // Apply the instance's transforms
+        if let Ok(ops) = table.get::<_, mlua::Table>("ops") {
+            apply_mesh_transforms(&mut mesh, &ops)?;
+        }
+
+        Ok(mesh)
     } else if obj_type == "csg" {
         // For CSG, we need to use Manifold for correct boolean operations
         let manifold = build_manifold_object(table, circular_segments)?;
@@ -569,10 +629,32 @@ fn apply_mesh_transforms(mesh: &mut MeshData, ops: &mlua::Table) -> Result<()> {
                     }
                 }
                 "scale" => {
+                    // Scale positions
                     for i in 0..mesh.positions.len() / 3 {
                         mesh.positions[i * 3] *= x as f32;
                         mesh.positions[i * 3 + 1] *= y as f32;
                         mesh.positions[i * 3 + 2] *= z as f32;
+                    }
+                    // For non-uniform scaling, normals must use transpose of inverse
+                    // The inverse of scale(x,y,z) is scale(1/x, 1/y, 1/z)
+                    // Transpose of diagonal matrix is itself
+                    let inv_x = if x.abs() > 1e-10 { 1.0 / x } else { 1.0 };
+                    let inv_y = if y.abs() > 1e-10 { 1.0 / y } else { 1.0 };
+                    let inv_z = if z.abs() > 1e-10 { 1.0 / z } else { 1.0 };
+                    for i in 0..mesh.normals.len() / 3 {
+                        mesh.normals[i * 3] *= inv_x as f32;
+                        mesh.normals[i * 3 + 1] *= inv_y as f32;
+                        mesh.normals[i * 3 + 2] *= inv_z as f32;
+                        // Re-normalize
+                        let nx = mesh.normals[i * 3];
+                        let ny = mesh.normals[i * 3 + 1];
+                        let nz = mesh.normals[i * 3 + 2];
+                        let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                        if len > 1e-10 {
+                            mesh.normals[i * 3] /= len;
+                            mesh.normals[i * 3 + 1] /= len;
+                            mesh.normals[i * 3 + 2] /= len;
+                        }
                     }
                 }
                 _ => {}
