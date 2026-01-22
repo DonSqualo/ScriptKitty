@@ -7,7 +7,7 @@ Build and development notes for Claude agents.
 ### Server (Rust)
 ```bash
 cd server
-cargo test        # Run tests (48 tests across all modules)
+cargo test        # Run tests (60 tests across all modules)
 cargo build       # Debug build
 cargo build --release  # Release build
 ```

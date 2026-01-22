@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.12 - Prioritized implementation backlog (2026-01-22).
+ScriptKitty v0.0.13 - Prioritized implementation backlog (2026-01-22).
 
 # Very High Priority
 
@@ -12,17 +12,17 @@ Current `nanovna.rs` uses Wheeler formula with frequency-dependent corrections. 
 - Skin effect: `R_ac = R_dc·√(1 + (ω/ω_skin)²)` for frequency-dependent resistance
 - Parasitic capacitance between turns (Medhurst approximation)
 - Self-resonant frequency (SRF) calculation: `f_SRF = 1/(2π√(LC_parasitic))`
+- Mutual inductance M via Neumann formula for coaxial loops
+- Coupled impedance: `Z_in = jωL_drive + (ωM)²/(R_res + jωL_res)` for sharp Q peaks
 - S11 conversion with frequency-dependent impedance
 
 **Still Missing:**
-- No mutual inductance M between drive coil and resonator gap
 - No geometry-aware inductance (reads hardcoded params, not actual mesh)
 - No sample environment coupling (biological tissue ε_r ≈ 80)
 
 **Remaining Roadmap:**
 1. **Geometry-Aware Inductance**: Extract coil coordinates from mesh, compute L from field energy `L = 2W_m/I²`
-2. **Mutual Inductance**: Compute M between drive coil and resonator gap via B-field integration
-3. **Coupled Impedance**: `Z_in = jωL_drive + (ωM)²/(R_load + jωL_load)` for S11 with sharp Q peaks
+2. **Sample Coupling**: Model biological tissue effects on resonator Q
 
 Files: `server/src/nanovna.rs`, `server/src/main.rs`
 
@@ -32,10 +32,10 @@ Files: `server/src/nanovna.rs`, `server/src/main.rs`
 
 # Medium Priority
 
-### Circuit Simulation (Beyond SVG)
-Current `circuit.rs` generates SVG diagrams only; no SPICE-like simulation.
-- Could add: AC analysis, impedance at frequency, power transfer calculation
-- Lower priority: NanoVNA covers frequency sweep use case for matching networks
+### Circuit Simulation (SPICE-like)
+`circuit.rs` now has AC analysis in addition to SVG diagram generation.
+**Implemented:** analyze_circuit_ac() computes S11, power transfer, voltage gain
+**Could add:** Transient analysis, node voltages, current through each component
 
 Files: `server/src/circuit.rs`
 
@@ -44,6 +44,26 @@ Files: `server/src/circuit.rs`
 # ===
 
 ## Recently Fixed (2026-01-22)
+
+### NanoVNA Coupled Resonator
+Added mutual inductance and coupled impedance for Loop Gap Resonator modeling.
+- Neumann formula for coaxial loop mutual inductance
+- Coupled impedance calculation with reflected impedance
+- Sharp Q peaks visible in S11 sweep when resonator coupled
+- File: `server/src/nanovna.rs`
+
+### Circuit AC Analysis
+Added impedance chain analysis beyond SVG diagram generation.
+- `CircuitAnalysis` struct with S11, power transfer, voltage gain
+- `analyze_circuit_ac()` function computes circuit response at frequency
+- L-network impedance transformation for matching networks
+- File: `server/src/circuit.rs`
+
+### Degenerate Triangle Removal
+Added mesh cleanup to remove zero-area triangles.
+- `remove_degenerate_triangles()` function
+- Builds filtered index array preserving valid triangles
+- File: `server/src/geometry.rs`
 
 ### NanoVNA Frequency-Dependent Effects
 Added realistic RF behavior to coil impedance model.
@@ -175,13 +195,13 @@ Fixed Probe line measurement to use Lua array format.
 - group containers with recursive children
 - Transform chain: at, rotate, scale, centered
 - assembly/component/instance hierarchy with backend support
-- Mesh validation (4 tests)
+- Mesh validation (7 tests)
 
 ### Physics
-- Helmholtz magnetic field (Biot-Savart, 7 tests)
+- Helmholtz magnetic field (Biot-Savart, 10 tests)
 - Acoustic pressure field (Rayleigh-Sommerfeld, 7 tests)
 - Standing wave reflection modeling (mirror source)
-- NanoVNA S11 frequency sweep (7 tests) - Wheeler approximation only (see Very High Priority)
+- NanoVNA S11 frequency sweep (12 tests) - Wheeler + skin effect + parasitic capacitance + mutual inductance
 
 ### Instruments
 - GaussMeter backend computation for point B-field measurement
@@ -199,7 +219,7 @@ Fixed Probe line measurement to use Lua array format.
 - XZ/XY/YZ colormap planes with jet/viridis/plasma colormaps
 - 3D arrow field for magnetic and acoustic vectors
 - 1D line plot (canvas graph) for magnetic and acoustic fields
-- Circuit diagram SVG (15 tests)
+- Circuit diagram SVG + AC analysis (21 tests)
 - NanoVNA S11 frequency response graph
 
 ### Renderer
