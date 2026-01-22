@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.11 - Prioritized implementation backlog (2026-01-22).
+ScriptKitty v0.0.12 - Prioritized implementation backlog (2026-01-22).
 
 # Very High Priority
 
@@ -46,27 +46,28 @@ Files: `server/src/circuit.rs`
 
 # Low Priority
 
-### Mesh Validation
-No geometric integrity checks on output meshes.
-- Non-manifold geometry detection
-- Zero-volume solid warnings
-- Self-intersection detection
-
-Files: `server/src/geometry.rs`
-
 ### Probe Volume Statistics
 `Instruments/init.lua:71` has `statistics` config parameter but unclear what's computed.
 - No documentation of min/max/mean/std statistics for volume probes
 - Volume probe API exists but backend behavior undocumented
 
-### Export Placeholder Normals
-`export.rs:317` has `normals: vec![0.0; 24], // Placeholder normals` in test code.
-- Test mesh uses placeholder normals instead of computed values
-- Not a runtime issue, just test code quality
-
 # ===
 
 ## Recently Fixed (2026-01-22)
+
+### Mesh Validation
+Added mesh validation functions to detect common geometry issues.
+- Checks for NaN/Inf in positions and normals
+- Validates indices are within bounds
+- Detects degenerate triangles (zero area)
+- Warns about near-zero or extremely large mesh extents
+- Added 4 unit tests for validation
+- File: `server/src/geometry.rs`
+
+### Export Placeholder Normals
+Fixed test cube data in export.rs to have computed corner normals.
+- Replaced `vec![0.0; 24]` with proper corner normals (averaged from adjacent faces)
+- File: `server/src/export.rs`
 
 ### Component/Instance Backend Support
 Full assembly/component/instance hierarchy now working end-to-end.
@@ -160,6 +161,7 @@ Fixed Probe line measurement to use Lua array format.
 - group containers with recursive children
 - Transform chain: at, rotate, scale, centered
 - assembly/component/instance hierarchy with backend support
+- Mesh validation (4 tests)
 
 ### Physics
 - Helmholtz magnetic field (Biot-Savart, 7 tests)

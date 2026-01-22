@@ -301,20 +301,33 @@ mod tests {
 
     fn make_test_cube() -> MeshData {
         // Simple cube: 8 vertices, 12 triangles (2 per face)
+        // Corner normals computed as average of adjacent face normals
+        // For cube corners, normalized (-1,-1,-1) to (+1,+1,+1) diagonal
+        let inv_sqrt3: f32 = 1.0 / 3.0_f32.sqrt();
         MeshData {
             positions: vec![
-                // Front face
-                0.0, 0.0, 0.0, // 0
-                10.0, 0.0, 0.0, // 1
-                10.0, 10.0, 0.0, // 2
-                0.0, 10.0, 0.0, // 3
-                // Back face
-                0.0, 0.0, 10.0, // 4
-                10.0, 0.0, 10.0, // 5
-                10.0, 10.0, 10.0, // 6
-                0.0, 10.0, 10.0, // 7
+                // Front face (z=0)
+                0.0, 0.0, 0.0, // 0: corner (-x,-y,-z)
+                10.0, 0.0, 0.0, // 1: corner (+x,-y,-z)
+                10.0, 10.0, 0.0, // 2: corner (+x,+y,-z)
+                0.0, 10.0, 0.0, // 3: corner (-x,+y,-z)
+                // Back face (z=10)
+                0.0, 0.0, 10.0, // 4: corner (-x,-y,+z)
+                10.0, 0.0, 10.0, // 5: corner (+x,-y,+z)
+                10.0, 10.0, 10.0, // 6: corner (+x,+y,+z)
+                0.0, 10.0, 10.0, // 7: corner (-x,+y,+z)
             ],
-            normals: vec![0.0; 24], // Placeholder normals
+            normals: vec![
+                // Corner normals (averaged from 3 adjacent faces)
+                -inv_sqrt3, -inv_sqrt3, -inv_sqrt3, // 0
+                inv_sqrt3, -inv_sqrt3, -inv_sqrt3,  // 1
+                inv_sqrt3, inv_sqrt3, -inv_sqrt3,   // 2
+                -inv_sqrt3, inv_sqrt3, -inv_sqrt3,  // 3
+                -inv_sqrt3, -inv_sqrt3, inv_sqrt3,  // 4
+                inv_sqrt3, -inv_sqrt3, inv_sqrt3,   // 5
+                inv_sqrt3, inv_sqrt3, inv_sqrt3,    // 6
+                -inv_sqrt3, inv_sqrt3, inv_sqrt3,   // 7
+            ],
             colors: vec![
                 1.0, 0.0, 0.0, // Red
                 0.0, 1.0, 0.0, // Green
@@ -326,12 +339,17 @@ mod tests {
                 0.5, 0.5, 0.5, // Gray
             ],
             indices: vec![
-                // Front
-                0, 1, 2, 0, 2, 3, // Back
-                4, 6, 5, 4, 7, 6, // Top
-                3, 2, 6, 3, 6, 7, // Bottom
-                0, 5, 1, 0, 4, 5, // Right
-                1, 5, 6, 1, 6, 2, // Left
+                // Front (z=0, normal -z)
+                0, 1, 2, 0, 2, 3,
+                // Back (z=10, normal +z)
+                4, 6, 5, 4, 7, 6,
+                // Top (y=10, normal +y)
+                3, 2, 6, 3, 6, 7,
+                // Bottom (y=0, normal -y)
+                0, 5, 1, 0, 4, 5,
+                // Right (x=10, normal +x)
+                1, 5, 6, 1, 6, 2,
+                // Left (x=0, normal -x)
                 0, 3, 7, 0, 7, 4,
             ],
         }

@@ -693,3 +693,184 @@ pub fn generate_mesh_from_lua_manifold(_lua: &Lua, value: &Value, circular_segme
 pub fn generate_mesh_from_object_manifold(_lua: &Lua, table: &mlua::Table, circular_segments: u32) -> Result<MeshData> {
     build_object_manifold(table, circular_segments)
 }
+
+// ===========================
+// Mesh Validation
+
+/// Validation result with warnings
+pub struct MeshValidation {
+    pub valid: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Validate mesh for common issues
+pub fn validate_mesh(mesh: &MeshData) -> MeshValidation {
+    let mut warnings = Vec::new();
+    let mut valid = true;
+
+    // Check for NaN/Inf in positions
+    for (i, &p) in mesh.positions.iter().enumerate() {
+        if !p.is_finite() {
+            warnings.push(format!("Position {} has non-finite value: {}", i / 3, p));
+            valid = false;
+        }
+    }
+
+    // Check for NaN/Inf in normals
+    for (i, &n) in mesh.normals.iter().enumerate() {
+        if !n.is_finite() {
+            warnings.push(format!("Normal {} has non-finite value: {}", i / 3, n));
+            valid = false;
+        }
+    }
+
+    // Check for valid indices
+    let num_vertices = mesh.positions.len() / 3;
+    for (i, &idx) in mesh.indices.iter().enumerate() {
+        if idx as usize >= num_vertices {
+            warnings.push(format!("Index {} references out-of-bounds vertex {}", i, idx));
+            valid = false;
+        }
+    }
+
+    // Check for degenerate triangles (zero area)
+    let num_tris = mesh.indices.len() / 3;
+    let mut degenerate_count = 0;
+    for tri in 0..num_tris {
+        let base = tri * 3;
+        if base + 2 >= mesh.indices.len() {
+            continue;
+        }
+        let i0 = mesh.indices[base] as usize;
+        let i1 = mesh.indices[base + 1] as usize;
+        let i2 = mesh.indices[base + 2] as usize;
+
+        if i0 >= num_vertices || i1 >= num_vertices || i2 >= num_vertices {
+            continue;
+        }
+
+        let v0 = [
+            mesh.positions[i0 * 3],
+            mesh.positions[i0 * 3 + 1],
+            mesh.positions[i0 * 3 + 2],
+        ];
+        let v1 = [
+            mesh.positions[i1 * 3],
+            mesh.positions[i1 * 3 + 1],
+            mesh.positions[i1 * 3 + 2],
+        ];
+        let v2 = [
+            mesh.positions[i2 * 3],
+            mesh.positions[i2 * 3 + 1],
+            mesh.positions[i2 * 3 + 2],
+        ];
+
+        let edge1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+        let edge2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
+        let normal = cross(edge1, edge2);
+        let area_sq = normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2];
+
+        if area_sq < 1e-12 {
+            degenerate_count += 1;
+        }
+    }
+
+    if degenerate_count > 0 {
+        warnings.push(format!("{} degenerate triangles (zero area)", degenerate_count));
+    }
+
+    // Check mesh bounds (warn if very small or very large)
+    if num_vertices > 0 {
+        let (mut min_x, mut min_y, mut min_z) = (f32::MAX, f32::MAX, f32::MAX);
+        let (mut max_x, mut max_y, mut max_z) = (f32::MIN, f32::MIN, f32::MIN);
+
+        for i in 0..num_vertices {
+            let x = mesh.positions[i * 3];
+            let y = mesh.positions[i * 3 + 1];
+            let z = mesh.positions[i * 3 + 2];
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            min_z = min_z.min(z);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+            max_z = max_z.max(z);
+        }
+
+        let size_x = max_x - min_x;
+        let size_y = max_y - min_y;
+        let size_z = max_z - min_z;
+
+        if size_x < 1e-6 || size_y < 1e-6 || size_z < 1e-6 {
+            warnings.push(format!(
+                "Mesh has near-zero extent: ({:.6}, {:.6}, {:.6})",
+                size_x, size_y, size_z
+            ));
+        }
+
+        if size_x > 1e6 || size_y > 1e6 || size_z > 1e6 {
+            warnings.push(format!(
+                "Mesh has extremely large extent: ({:.1}, {:.1}, {:.1}) - check units",
+                size_x, size_y, size_z
+            ));
+        }
+    }
+
+    MeshValidation { valid, warnings }
+}
+
+// ===========================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_mesh_valid() {
+        // Simple triangle with sufficient extent in all 3 dimensions
+        let mesh = MeshData {
+            positions: vec![0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 5.0, 10.0, 10.0],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            indices: vec![0, 1, 2],
+        };
+        let result = validate_mesh(&mesh);
+        assert!(result.valid, "Valid mesh should pass validation");
+        assert!(result.warnings.is_empty(), "Valid mesh should have no warnings: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn test_validate_mesh_degenerate_triangle() {
+        let mesh = MeshData {
+            positions: vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // degenerate
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            indices: vec![0, 1, 2],
+        };
+        let result = validate_mesh(&mesh);
+        assert!(result.warnings.iter().any(|w| w.contains("degenerate")));
+    }
+
+    #[test]
+    fn test_validate_mesh_nan_position() {
+        let mesh = MeshData {
+            positions: vec![f32::NAN, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0, 0.0],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            indices: vec![0, 1, 2],
+        };
+        let result = validate_mesh(&mesh);
+        assert!(!result.valid, "Mesh with NaN should fail validation");
+    }
+
+    #[test]
+    fn test_validate_mesh_out_of_bounds_index() {
+        let mesh = MeshData {
+            positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0, 0.0],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            colors: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            indices: vec![0, 1, 99], // Out of bounds
+        };
+        let result = validate_mesh(&mesh);
+        assert!(!result.valid, "Mesh with out-of-bounds index should fail");
+    }
+}

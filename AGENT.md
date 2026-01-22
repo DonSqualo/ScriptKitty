@@ -7,7 +7,7 @@ Build and development notes for Claude agents.
 ### Server (Rust)
 ```bash
 cd server
-cargo test        # Run tests (44 tests across all modules)
+cargo test        # Run tests (48 tests across all modules)
 cargo build       # Debug build
 cargo build --release  # Release build
 ```
@@ -67,3 +67,4 @@ The server pattern-matches for `helmholtz` or `coil_mean_radius` in Lua content 
 - `server/src/acoustic.rs` - 8 tests for acoustic field computation
 - `server/src/nanovna.rs` - 7 tests for NanoVNA S11 simulation
 - `server/src/circuit.rs` - 18 tests for circuit SVG generation
+- `server/src/geometry.rs` - 4 tests for mesh validation
