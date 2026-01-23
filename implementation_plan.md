@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.16 - Electron-MRI Project (2026-01-23)
+ScriptKitty v0.0.15 - Electron-MRI Project (2026-01-23)
 
 ## Task Tracker
 
@@ -24,7 +24,7 @@ Replicate the Petryakov et al. 2007 "Single loop multi-gap resonator for whole b
 
 **Paper Reference**: Petryakov et al., J. Magn. Reson. 188 (2007) 68-73
 
-## Completed This Session (v0.0.16)
+## Completed This Session (v0.0.15)
 
 ### B1 Field Visualization (Task 4)
 - Added `B1FieldConfig` struct and `compute_b1_field()` function in `field.rs`
@@ -73,7 +73,7 @@ Requires spectroscopy modeling beyond current scope - would need:
 
 ## Completed (Reference)
 
-### Electron-MRI v0.0.16 (Current)
+### Electron-MRI v0.0.15 (Current)
 - B1 field homogeneity visualization for SLMG resonator
 - Loaded Q computation with automatic sample detection
 - Multi-gap resonator frequency sweep at GHz frequencies
