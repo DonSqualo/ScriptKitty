@@ -250,6 +250,19 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             let _ = tx.send(binary);
         }
 
+        // Compute B1 field for resonator (EPR/NMR) if configured
+        if let Some(field_data) = try_compute_b1_field(&lua, &content) {
+            let field_binary = field_data.to_binary();
+            info!(
+                "Generated B1 field: {}x{} slice, {} arrows, {} bytes",
+                field_data.slice_width,
+                field_data.slice_height,
+                field_data.arrows_positions.len() / 3,
+                field_binary.len()
+            );
+            let _ = tx.send(field_binary);
+        }
+
         // Compute NanoVNA frequency sweep if configured
         if let Some(sweep) = try_compute_nanovna_sweep(&lua, &content) {
             let sweep_binary = sweep.to_binary();
@@ -436,6 +449,54 @@ fn try_compute_acoustic_field(lua: &mlua::Lua, content: &str) -> Option<field::F
     );
 
     Some(acoustic::compute_acoustic_field(&config, plane_type, plane_offset, colormap))
+}
+
+/// Compute B1 field visualization for SLMG (Single Loop Multi-Gap) resonators
+/// Used for EPR/NMR imaging applications where RF magnetic field homogeneity is critical
+fn try_compute_b1_field(lua: &mlua::Lua, content: &str) -> Option<field::FieldData> {
+    // Check if this file defines a resonator
+    if !content.contains("Resonator") || !content.contains("num_gaps") {
+        return None;
+    }
+
+    let _result: mlua::Value = lua.load(content).eval().ok()?;
+    let globals = lua.globals();
+
+    // Get Resonator configuration
+    let resonator: mlua::Table = globals.get("Resonator").ok()?;
+    let inner_radius: f64 = resonator.get("inner_radius").ok()
+        .or_else(|| resonator.get::<_, f64>("inner_diameter").ok().map(|d| d / 2.0))?;
+    let outer_radius: f64 = resonator.get("outer_radius").ok()
+        .or_else(|| resonator.get::<_, f64>("outer_diameter").ok().map(|d| d / 2.0))?;
+    let length: f64 = resonator.get("length").ok()?;
+    let num_gaps: u32 = resonator.get("num_gaps").ok()?;
+
+    // Get resonant frequency from NanoVNA config if available
+    let resonant_frequency: f64 = if let Ok(nanovna) = globals.get::<_, mlua::Table>("NanoVNA") {
+        let f_start: f64 = nanovna.get("f_start").unwrap_or(1.0e9);
+        let f_stop: f64 = nanovna.get("f_stop").unwrap_or(1.5e9);
+        (f_start + f_stop) / 2.0
+    } else {
+        1.2e9 // Default L-band frequency
+    };
+
+    let config = field::B1FieldConfig {
+        inner_radius,
+        outer_radius,
+        length,
+        num_gaps,
+        resonant_frequency,
+    };
+
+    // Get plane configuration from instruments if available
+    let (plane_type, plane_offset, colormap) = get_field_plane_config(lua, "field_plane");
+
+    info!(
+        "Computing B1 field: R_inner={:.1}mm, R_outer={:.1}mm, L={:.1}mm, N={}, f={:.3}GHz, plane={:?}",
+        inner_radius, outer_radius, length, num_gaps, resonant_frequency / 1e9, plane_type
+    );
+
+    Some(field::compute_b1_field(&config, plane_type, plane_offset, colormap))
 }
 
 fn try_compute_probe_measurements(lua: &mlua::Lua, content: &str) -> Vec<field::LineMeasurement> {
@@ -844,6 +905,7 @@ fn try_compute_hydrophone_measurements(lua: &mlua::Lua, content: &str) -> Vec<(f
 }
 
 /// Process NanoVNA frequency sweep if configured
+/// Supports both simple coil sweep and multi-gap resonator physics
 fn try_compute_nanovna_sweep(lua: &mlua::Lua, content: &str) -> Option<nanovna::FrequencySweep> {
     if !content.contains("NanoVNA") && !content.contains("nanovna") {
         return None;
@@ -858,7 +920,73 @@ fn try_compute_nanovna_sweep(lua: &mlua::Lua, content: &str) -> Option<nanovna::
     let f_stop: f64 = nanovna_table.get("f_stop").unwrap_or(50e6);
     let num_points: usize = nanovna_table.get::<_, u32>("num_points").unwrap_or(101) as usize;
 
-    // Get coil configuration
+    // Check if this is a multi-gap resonator configuration (GHz frequencies, num_gaps present)
+    let num_gaps: Option<u32> = nanovna_table.get("num_gaps").ok();
+    let inner_radius: Option<f64> = nanovna_table.get("inner_radius").ok();
+    let outer_radius: Option<f64> = nanovna_table.get("outer_radius").ok();
+    let length: Option<f64> = nanovna_table.get("length").ok();
+    let gap_thickness: Option<f64> = nanovna_table.get("gap_thickness").ok();
+    let gap_permittivity: f64 = nanovna_table.get("gap_permittivity").unwrap_or(2.6);
+
+    // Check for sample/phantom for loaded Q calculation
+    let (sample_conductivity, sample_volume_cc) = if let Ok(phantom) = globals.get::<_, mlua::Table>("Phantom") {
+        // Calculate approximate sample volume from phantom tubes
+        let tube_diameter: f64 = phantom.get("tube_diameter").unwrap_or(4.0);
+        let tube_count: i32 = phantom.get("tube_count").unwrap_or(19);
+        let fill_height: f64 = phantom.get("fill_height").unwrap_or(11.0);
+        let tube_radius = tube_diameter / 2.0;
+        let volume_per_tube = std::f64::consts::PI * tube_radius * tube_radius * fill_height / 1000.0; // cc
+        let total_volume = volume_per_tube * tube_count as f64;
+        // Water conductivity ~ 0.01 S/m, saline ~ 0.77 S/m
+        (0.77, total_volume)
+    } else {
+        (0.0, 0.0)
+    };
+
+    // Use multi-gap resonator physics if configuration is present
+    if let (Some(n_gaps), Some(r_inner), Some(r_outer), Some(len), Some(gap_t)) =
+        (num_gaps, inner_radius, outer_radius, length, gap_thickness)
+    {
+        let config = nanovna::MultiGapResonatorConfig {
+            inner_radius: r_inner,
+            outer_radius: r_outer,
+            length: len,
+            num_gaps: n_gaps,
+            gap_thickness: gap_t,
+            gap_permittivity,
+        };
+
+        let f_resonant = nanovna::calculate_multigap_resonant_frequency(&config);
+        let q_unloaded = nanovna::calculate_multigap_q_factor(&config, f_resonant);
+
+        info!(
+            "Computing multi-gap resonator sweep: {:.3} GHz - {:.3} GHz, {} points",
+            f_start / 1e9, f_stop / 1e9, num_points
+        );
+        info!(
+            "Multi-gap resonator: N={}, f0={:.3} GHz, Q_unloaded={:.0}",
+            n_gaps, f_resonant / 1e9, q_unloaded
+        );
+
+        if sample_volume_cc > 0.0 {
+            let q_loaded = nanovna::calculate_loaded_q(&config, f_resonant, sample_conductivity, sample_volume_cc);
+            info!(
+                "Loaded Q with {:.1}cc sample (σ={:.2} S/m): Q_loaded={:.0}",
+                sample_volume_cc, sample_conductivity, q_loaded
+            );
+        }
+
+        let sweep = nanovna::compute_multigap_frequency_sweep(&config, f_start, f_stop, num_points);
+
+        info!(
+            "Multi-gap NanoVNA min S11: {:.2} dB at {:.3} GHz",
+            sweep.min_s11_db, sweep.min_s11_freq / 1e9
+        );
+
+        return Some(sweep);
+    }
+
+    // Fall back to simple coil model for lower frequencies
     let coil_radius: f64 = nanovna_table.get("coil_radius").unwrap_or(25.0);
     let num_turns: u32 = nanovna_table.get("num_turns").unwrap_or(10);
     let wire_diameter: f64 = nanovna_table.get("wire_diameter").unwrap_or(0.5);

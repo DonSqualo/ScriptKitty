@@ -44,6 +44,21 @@ PVCShell = {
   inner_radius = Resonator.inner_radius - 2,
 }
 
+ModulationCoil = {
+  wire_diameter = 0.5,
+  coil_width = 10,
+  num_turns = 20,
+  axial_offset = Resonator.length / 4,
+}
+
+Housing = {
+  outer_radius = Resonator.outer_radius + 5,
+  wall_thickness = 3,
+  lid_thickness = 5,
+  slot_width = 15,
+  num_slots = 4,
+}
+
 -- ===========================
 -- Materials
 -- ===========================
@@ -195,6 +210,51 @@ end
 local phantom = group("phantom", phantom_tubes)
 
 -- ===========================
+-- Modulation Coils
+-- Form-wound coils for EPR field modulation at 100 kHz
+-- Positioned on either side of the resonator center
+-- ===========================
+
+local modulation_coils = {}
+local mod_coil_r = PVCShell.inner_radius - 1
+
+for i, z_sign in ipairs({1, -1}) do
+  local z_pos = z_sign * ModulationCoil.axial_offset
+  local mod_coil = ring(
+    mod_coil_r - ModulationCoil.coil_width / 2,
+    mod_coil_r + ModulationCoil.coil_width / 2,
+    ModulationCoil.wire_diameter * ModulationCoil.num_turns
+  ):at(0, 0, z_pos):material(copper):color(0.9, 0.6, 0.3, 0.8)
+  table.insert(modulation_coils, mod_coil)
+end
+
+local modulation_assembly = group("modulation_coils", modulation_coils)
+
+-- ===========================
+-- Housing and Shield
+-- PVC case with silver-plated interior for RF shielding
+-- Includes slots for sample access
+-- ===========================
+
+local housing_outer = ring(
+  Housing.outer_radius - Housing.wall_thickness,
+  Housing.outer_radius,
+  Resonator.length + 2 * Housing.lid_thickness
+):at(0, 0, -Housing.lid_thickness):material(pvc):color(0.6, 0.6, 0.6, 0.5)
+
+local lid_top = cylinder(Housing.outer_radius, Housing.lid_thickness)
+  :at(0, 0, Resonator.length / 2)
+  :material(silver)
+  :color(0.8, 0.8, 0.85, 0.9)
+
+local lid_bottom = cylinder(Housing.outer_radius, Housing.lid_thickness)
+  :at(0, 0, -Resonator.length / 2 - Housing.lid_thickness)
+  :material(silver)
+  :color(0.8, 0.8, 0.85, 0.9)
+
+local housing = group("housing", {housing_outer, lid_top, lid_bottom})
+
+-- ===========================
 -- Assembly
 -- ===========================
 
@@ -204,6 +264,8 @@ local assembly = group("electron_mri", {
   pvc_shell,
   coupling_assembly,
   phantom,
+  modulation_assembly,
+  housing,
 })
 
 ScriptCAD.register(assembly)

@@ -765,6 +765,8 @@ pub fn build_object_manifold(table: &mlua::Table, circular_segments: u32) -> Res
 }
 
 /// Build mesh from a serialized object using Manifold, with optional degenerate triangle removal
+/// Provided as a public API for mesh cleanup, may not be used internally
+#[allow(dead_code)]
 pub fn build_object_manifold_clean(table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
     let mut mesh = build_mesh_recursive(table, circular_segments)?;
     if remove_degenerates {
@@ -814,6 +816,8 @@ pub fn generate_mesh_from_object_manifold(_lua: &Lua, table: &mlua::Table, circu
 }
 
 /// Generate mesh from a single serialized object using Manifold, with optional degenerate triangle removal
+/// Provided as a public API for mesh cleanup, may not be used internally
+#[allow(dead_code)]
 pub fn generate_mesh_from_object_manifold_clean(_lua: &Lua, table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
     build_object_manifold_clean(table, circular_segments, remove_degenerates)
 }
@@ -876,12 +880,16 @@ pub fn remove_degenerate_triangles(mesh: &mut MeshData) -> usize {
 }
 
 /// Validation result with warnings
+/// Part of the public API for debugging mesh issues
+#[allow(dead_code)]
 pub struct MeshValidation {
     pub valid: bool,
     pub warnings: Vec<String>,
 }
 
 /// Validate mesh for common issues
+/// Part of the public API for debugging mesh issues
+#[allow(dead_code)]
 pub fn validate_mesh(mesh: &MeshData) -> MeshValidation {
     let mut warnings = Vec::new();
     let mut valid = true;
