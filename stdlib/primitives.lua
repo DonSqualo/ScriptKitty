@@ -210,4 +210,52 @@ function Primitives.ring(inner_radius, outer_radius, height)
   )
 end
 
+-- SDF for wedge (annular sector with height, base on XY plane at Z=0)
+-- Start angle is 0 (positive X axis), sweep is the angular extent in degrees
+local function wedge_sdf(inner_radius, outer_radius, height, sweep_angle)
+  local half_angle = math.rad(sweep_angle) / 2
+  local cos_half = math.cos(half_angle)
+  local sin_half = math.sin(half_angle)
+  return function(x, y, z)
+    local rho = math.sqrt(x*x + y*y)
+    local d_inner = inner_radius - rho
+    local d_outer = rho - outer_radius
+    local d_radial = math.max(d_inner, d_outer)
+    local d_bottom = -z
+    local d_top = z - height
+    local d_vertical = math.max(d_bottom, d_top)
+    local angle = math.atan2(y, x)
+    local d_angle1 = x * sin_half - y * cos_half
+    local d_angle2 = x * sin_half + y * cos_half
+    local d_angular = math.max(-d_angle1, -d_angle2)
+    local max_d = math.max(d_radial, d_vertical, d_angular)
+    local outside = math.sqrt(
+      math.max(d_radial, 0)^2 +
+      math.max(d_vertical, 0)^2 +
+      math.max(d_angular, 0)^2
+    )
+    local inside = math.min(max_d, 0)
+    return outside + inside
+  end
+end
+
+--- Create a wedge (annular sector with height) with base on XY plane at Z=0
+-- Used for radial resonator segments in loop-gap resonators
+-- The wedge is centered on the positive X axis (angle=0) and sweeps symmetrically
+-- @param inner_radius Inner radius of the wedge (mm)
+-- @param outer_radius Outer radius of the wedge (mm)
+-- @param height Height of the wedge along Z axis (mm)
+-- @param sweep_angle Angular extent in degrees (centered on X axis)
+-- @return Shape object
+function Primitives.wedge(inner_radius, outer_radius, height, sweep_angle)
+  local half_angle = math.rad(sweep_angle) / 2
+  local cos_half = math.cos(half_angle)
+  local sin_half = math.sin(half_angle)
+  local max_y = outer_radius * sin_half
+  return Shape(wedge_sdf(inner_radius, outer_radius, height, sweep_angle),
+    {min = {inner_radius * cos_half, -max_y, 0}, max = {outer_radius, max_y, height}},
+    {primitive = "wedge", params = {inner_radius = inner_radius, outer_radius = outer_radius, h = height, sweep_angle = sweep_angle}}
+  )
+end
+
 return Primitives

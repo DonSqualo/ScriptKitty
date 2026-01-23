@@ -1,230 +1,181 @@
 # Implementation Plan
 
-ScriptKitty v0.0.13 - Prioritized implementation backlog (2026-01-22).
+ScriptKitty v0.0.15 - Electron-MRI Project (2026-01-23)
 
-# Very High Priority
+## Task Tracker
 
-### NanoVNA Coupled Resonator Simulation
-Current `nanovna.rs` uses Wheeler formula with frequency-dependent corrections. Still no connection to actual geometry for inductance computation.
+| # | Task | Status | Depends On |
+|---|------|--------|------------|
+| 1 | SLMG resonator geometry (16 wedge segments) | completed | — |
+| 2 | Double coupling loop geometry | completed | 1 |
+| 3 | Multi-gap resonator RF physics (NanoVNA) | completed | 1 |
+| 4 | B1 field homogeneity visualization | pending | 1 |
+| 5 | 19-tube phantom geometry | completed | — |
+| 6 | Loaded Q computation | pending | 3, 5 |
+| 7 | Modulation coils | pending | 1 |
+| 8 | Housing and shield | pending | 1 |
+| 9 | EPR image simulation (final deliverable) | pending | 4, 5, 6 |
 
-**Now Implemented:**
-- Wheeler formula + Nagaoka correction for inductance
-- Skin effect: `R_ac = R_dc·√(1 + (ω/ω_skin)²)` for frequency-dependent resistance
-- Parasitic capacitance between turns (Medhurst approximation)
-- Self-resonant frequency (SRF) calculation: `f_SRF = 1/(2π√(LC_parasitic))`
-- Mutual inductance M via Neumann formula for coaxial loops
-- Coupled impedance: `Z_in = jωL_drive + (ωM)²/(R_res + jωL_res)` for sharp Q peaks
-- S11 conversion with frequency-dependent impedance
+**Next**: Tasks 4 and 6 are unblocked.
 
-**Still Missing:**
-- No geometry-aware inductance (reads hardcoded params, not actual mesh)
-- No sample environment coupling (biological tissue ε_r ≈ 80)
+## Project Goal
 
-**Remaining Roadmap:**
-1. **Geometry-Aware Inductance**: Extract coil coordinates from mesh, compute L from field energy `L = 2W_m/I²`
-2. **Sample Coupling**: Model biological tissue effects on resonator Q
+Replicate the Petryakov et al. 2007 "Single loop multi-gap resonator for whole body EPR imaging" device in simulation. Final deliverable: B1 field homogeneity visualization of a phantom inside the resonator, matching Figure 4 from the paper.
 
-Files: `server/src/nanovna.rs`, `server/src/main.rs`
+**Paper Reference**: Petryakov et al., J. Magn. Reson. 188 (2007) 68-73
 
-# High Priority
+## Very High Priority
 
-(No current items)
+### 1. SLMG Resonator Geometry
+Parametric 16-gap loop-gap resonator matching paper dimensions.
 
-# Medium Priority
+**Dimensions from paper:**
+- Inner diameter: 42mm
+- Outer diameter: 88mm
+- Length: 48mm
+- Number of gaps: 16 (parametric, min 8 required for 1.2 GHz)
+- Gap thickness: 1.68mm polystyrene plates
+- Segment material: Rexolite (silver-plated inner face + 13mm on sides)
 
-### Circuit Simulation (SPICE-like)
-`circuit.rs` now has AC analysis in addition to SVG diagram generation.
-**Implemented:** analyze_circuit_ac() computes S11, power transfer, voltage gain
-**Could add:** Transient analysis, node voltages, current through each component
+**Geometry breakdown:**
+- 16 wedge-shaped segments arranged radially
+- Each segment is a trapezoidal prism
+- Gaps between segments filled with polystyrene dielectric
+- PVC reinforcing cylinder (inner shell, diameter 42mm)
+- Conductive outer shield
 
-Files: `server/src/circuit.rs`
+**Lua API needed:**
+```lua
+Resonator = {
+  inner_diameter = 42,
+  outer_diameter = 88,
+  length = 48,
+  num_gaps = 16,
+  gap_thickness = 1.68,
+}
+```
 
-# Low Priority
+Files: `project/Electron-MRI.lua`, `server/src/geometry.rs`
 
-# ===
+### 2. Coupling Loop Geometry
+Double coupling loop with laterally displaced λ/4 feeding lines.
 
-## Recently Fixed (2026-01-22)
+**From paper:**
+- Parallel double loop design (20mm diameter each for L-band)
+- λ/4 feeding lines (~63mm at 1.2 GHz)
+- Attached to polystyrene spacer ring
+- Coupling capacitor in series
 
-### NanoVNA Coupled Resonator
-Added mutual inductance and coupled impedance for Loop Gap Resonator modeling.
-- Neumann formula for coaxial loop mutual inductance
-- Coupled impedance calculation with reflected impedance
-- Sharp Q peaks visible in S11 sweep when resonator coupled
-- File: `server/src/nanovna.rs`
+Files: `project/Electron-MRI.lua`
 
-### Circuit AC Analysis
-Added impedance chain analysis beyond SVG diagram generation.
-- `CircuitAnalysis` struct with S11, power transfer, voltage gain
-- `analyze_circuit_ac()` function computes circuit response at frequency
-- L-network impedance transformation for matching networks
-- File: `server/src/circuit.rs`
+### 3. Multi-Gap Resonator RF Physics
+Extend NanoVNA simulation for multi-gap loop-gap resonator.
+Simulate physics using complete 3D + time full EMF wave calculations, do not rely on given formulas, instead use them to write tests.
 
-### Degenerate Triangle Removal
-Added mesh cleanup to remove zero-area triangles.
-- `remove_degenerate_triangles()` function
-- Builds filtered index array preserving valid triangles
-- File: `server/src/geometry.rs`
+**Physics from paper:**
+- ω = 1/√(L_sum × C_sum)
+- L_sum = L × N (N gaps increases frequency by √N)
+- C_sum = C/N where C = ε₀ × S_c / d
+- Q = iωL/R (Q drops with increased gaps due to lower inductance)
 
-### NanoVNA Frequency-Dependent Effects
-Added realistic RF behavior to coil impedance model.
-- Skin effect resistance: `R_ac = R_dc·√(1 + (ω/ω_skin)²)`
-- Parasitic capacitance via Medhurst approximation
-- Self-resonant frequency calculation
-- File: `server/src/nanovna.rs`
+**Parameters to compute:**
+- Resonant frequency from geometry
+- Gap capacitance from plate area and dielectric
+- Total inductance from loop geometry
+- Q factor (empty and loaded)
 
-### Non-Z-Aligned Coil Support
-Field computation now supports arbitrarily oriented coils.
-- Biot-Savart integration works for any coil axis orientation
-- File: `server/src/field.rs`
+Files: `server/src/nanovna.rs`
 
-### Group Bounds Recalculation on Remove
-Fixed bounds not updating when children removed from groups.
-- `remove()` now triggers bounds recalculation
-- File: `stdlib/groups.lua`
+### 4. B1 Field Homogeneity Visualization
+Show RF magnetic field distribution inside resonator volume.
 
-### Probe Volume Statistics
-Implemented statistics computation for line probes when `statistics` parameter is specified.
-- `server/src/field.rs`: Added `ProbeStatistics` struct with min/max/mean/std fields
-- `server/src/field.rs`: Added `statistics: Option<ProbeStatistics>` field to `LineMeasurement`
-- `server/src/field.rs`: Updated `to_binary()` to serialize statistics (1-byte flag + 4x f32 if present)
-- `server/src/main.rs`: `try_compute_probe_measurements()` now checks for `statistics` config and computes values
+**From paper (Figure 4):**
+- XY and XZ slices through resonator center
+- Uniform intensity confirms good B1 homogeneity
+- 10mm scale bar
 
-### Mesh Validation
-Added mesh validation functions to detect common geometry issues.
-- Checks for NaN/Inf in positions and normals
-- Validates indices are within bounds
-- Detects degenerate triangles (zero area)
-- Warns about near-zero or extremely large mesh extents
-- Added 4 unit tests for validation
-- File: `server/src/geometry.rs`
+**Implementation:**
+- Compute B1 field at grid points inside resonator
+- Use MagneticFieldPlane with XY and XZ views
+- Normalize intensity for homogeneity assessment
 
-### Export Placeholder Normals
-Fixed test cube data in export.rs to have computed corner normals.
-- Replaced `vec![0.0; 24]` with proper corner normals (averaged from adjacent faces)
-- File: `server/src/export.rs`
+Files: `server/src/field.rs`, `project/Electron-MRI.lua`
 
-### Component/Instance Backend Support
-Full assembly/component/instance hierarchy now working end-to-end.
-- `stdlib/groups.lua:serialize()` correctly returns `type="assembly"` and `type="component"`
-- `geometry.rs:build_manifold_object()` handles "assembly", "component", and "instance" types
-- `build_mesh_recursive()` also updated to handle all three types
-- Instance resolution via component lookup implemented
-- Files: `stdlib/groups.lua`, `server/src/geometry.rs`
+## High Priority
 
-### Acoustic 3D/1D Visualization
-Acoustic field now has feature parity with magnetic field visualization.
-- Added 3D arrow field: 10×10×10 grid with pressure gradient vectors
-- Added 1D line profile: 101 points along Z axis at r=0
-- File: `server/src/acoustic.rs`
+### 5. Sample Phantom
+19-tube phantom for field homogeneity testing (Figure 4 from paper).
 
-### Transforms.lua Field Incompatibility
-Transform functions now compatible with primitive shape creation.
-- `translate()`, `rotate()`, `scale()` now use `._ops` pattern instead of `._transform`
-- Properly chains operations with primitives created via `primitives.lua`
-- Files: `stdlib/transforms.lua`
+**From paper:**
+- 19 polystyrene tubes, 4mm diameter
+- Arranged in circular pattern
+- Filled to 11mm height with 1mM TAM solution
+- Total volume ~11cc
 
-### Non-uniform Scale Normals
-Fixed incorrect normal transformation for non-uniform scaling.
-- `geometry.rs:apply_mesh_transforms()` now uses inverse scale factors for normals
-- Normals properly re-normalized after transformation
-- File: `server/src/geometry.rs`
+Files: `project/Electron-MRI.lua`
 
-# ===
+### 6. Loaded Q Computation
+Compute Q factor with lossy sample inside resonator.
 
-## Recently Fixed (2026-01-21)
+**From paper Table 1:**
+- Empty: f0 = 1.22 GHz
+- With 11cc saline: f0 = 1.216 GHz, Q = 72
+- With 20cc saline: Q = 57
 
-### Torus Primitive Rewrite
-Replaced `Polygons.revolve()` with parametric mesh generation.
-- Uses parametric equations: x = (R + r·cos(v))·cos(u), y = (R + r·cos(v))·sin(u), z = r·sin(v)
-- Generates vertices and normals for u_segments × v_segments grid
-- Creates Manifold via FFI to MeshGL
-- File: `server/src/geometry.rs:226-282`
+Files: `server/src/nanovna.rs`
 
-### Circuit → NanoVNA Impedance Integration
-MatchingNetwork can now auto-populate impedance from NanoVNA computation.
-- Added `nanovna::compute_impedance_at_frequency()` function
-- MatchingNetwork accepts `use_nanovna: true` config option
-- Falls back to static impedance values if NanoVNA config not found
-- Files: `server/src/nanovna.rs`, `server/src/main.rs`
+## Medium Priority
 
-### Probe Backend Computation
-Implemented line probe B-field sampling backend.
-- Added `LineMeasurement` struct with binary serialization (LNPROBE header)
-- `try_compute_probe_measurements()` samples B-field along line
-- Uses same Biot-Savart computation as GaussMeter
-- Files: `server/src/field.rs`, `server/src/main.rs`
+### 7. Modulation Coils
+Form-wound coils in cylinder slots for field modulation.
 
-### Window Z-Ordering
-Implemented click-to-focus z-ordering for draggable windows.
-- Added base z-index: 50 to .tui-window class
-- Tracks topZIndex counter, increments on window click
-- Files: `renderer/index.html`
+Files: `project/Electron-MRI.lua`
 
-### Magnetic Field Pattern Matching
-Backend now recognizes `Coil` global (project convention) in addition to `config` global.
-- `main.rs:try_compute_helmholtz_field` reads from `Coil.mean_radius`, `Coil.gap`, etc.
-- Also reads `Wire` global for wire diameter and packing factor
+### 8. Housing and Shield
+PVC case with parallel slots for sample access, silver-plated lids.
 
-### NanoVNA Renderer Support
-Added NanoVNA S11 display to renderer:
-- `renderer/index.html`: Added nanovna-window with canvas
-- `renderer/src/main.ts`: Added parse_nanovna_data() and draw_nanovna()
-- `server/src/main.rs`: Added current_nanovna state caching for new WebSocket clients
+Files: `project/Electron-MRI.lua`
 
-### Ring Primitive Fix
-Fixed `ring` primitive failing with `InvalidConstruction` error.
-- Reimplemented ring as difference of two cylinders in `geometry.rs`
-- Ring now created correctly via `outer_cylinder.difference(&inner_cylinder)`
+## Low Priority
 
-### Probe Line Parsing and Renderer Support
-Fixed Probe line measurement to use Lua array format.
-- Changed `line_table.get("start")` to `line_table.get(1)` in main.rs
-- Added renderer support for MEASURE and LNPROBE WebSocket messages
+### 9. EPR Image Simulation
+Simulated EPR image of phantom/sample (final deliverable).
 
-# ===
+## ===
 
 ## Completed (Reference)
 
-### Export
-- STL binary export (5 tests)
-- 3MF with per-vertex colors (5 tests)
+### Electron-MRI Geometry (v0.0.14)
+- SLMG resonator: 16 wedge segments arranged radially
+- Wedge primitive (stdlib + geometry.rs) for radial resonator segments
+- Double coupling loop geometry with λ/4 feeding lines
+- 19-tube phantom geometry for field homogeneity testing
+- Multi-gap resonator RF physics (NanoVNA extension with gap capacitance, resonant frequency, Q factor)
 
-### Geometry
-- box, cylinder, sphere, torus, ring primitives
-- CSG: union, difference, intersect via manifold3d
-- group containers with recursive children
-- Transform chain: at, rotate, scale, centered
-- assembly/component/instance hierarchy with backend support
-- Mesh validation (7 tests)
+### NanoVNA Coupled Resonator (v0.0.13)
+- Wheeler formula + Nagaoka correction for inductance
+- Skin effect resistance
+- Parasitic capacitance via Medhurst approximation
+- Mutual inductance M via Neumann formula
+- Coupled impedance calculation
+- S11 conversion with frequency-dependent impedance
 
-### Physics
+### Circuit AC Analysis (v0.0.13)
+- `CircuitAnalysis` struct with S11, power transfer, voltage gain
+- `analyze_circuit_ac()` function
+- L-network impedance transformation
+
+### Mesh Validation (v0.0.13)
+- Degenerate triangle removal
+- NaN/Inf validation
+- Index bounds checking
+
+### Physics Simulations (v0.0.12)
 - Helmholtz magnetic field (Biot-Savart, 10 tests)
 - Acoustic pressure field (Rayleigh-Sommerfeld, 7 tests)
-- Standing wave reflection modeling (mirror source)
-- NanoVNA S11 frequency sweep (12 tests) - Wheeler + skin effect + parasitic capacitance + mutual inductance
+- NanoVNA S11 frequency sweep (12 tests)
 
-### Instruments
-- GaussMeter backend computation for point B-field measurement
-- Hydrophone backend computation for point pressure measurement
-- MagneticFieldPlane with XY/YZ/XZ plane support + 3D arrows + 1D line
-- AcousticPressurePlane with XY/YZ/XZ plane support + 3D arrows + 1D line
-- Probe line measurement for B-field sampling along arbitrary lines
-
-### Materials
-- Comprehensive acoustic properties database (12 materials)
-- Copper, air, water, borosilicate glass, PZT, polycarbonate, PLA, PTFE, aluminum, neodymium
-- Speed of sound, impedance, attenuation coefficients
-
-### Visualization
-- XZ/XY/YZ colormap planes with jet/viridis/plasma colormaps
-- 3D arrow field for magnetic and acoustic vectors
-- 1D line plot (canvas graph) for magnetic and acoustic fields
-- Circuit diagram SVG + AC analysis (21 tests)
-- NanoVNA S11 frequency response graph
-
-### Renderer
-- Three.js mesh rendering with X-ray Fresnel material
-- Flat shading with dFdx/dFdy normals
-- WebSocket binary protocol: VIEW, FIELD, CIRCUIT, MEASURE, LNPROBE, NANOVNA headers
-- Draggable TUI windows with z-ordering
-- Retro scanline/CRT effects
+### Instruments (v0.0.12)
+- GaussMeter, Hydrophone, Probe line
+- MagneticFieldPlane, AcousticPressurePlane
+- 3D arrows, 1D line profiles

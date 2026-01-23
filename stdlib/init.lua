@@ -21,6 +21,7 @@ cylinder = ScriptCAD.primitives.cylinder
 sphere = ScriptCAD.primitives.sphere
 torus = ScriptCAD.primitives.torus
 ring = ScriptCAD.primitives.ring
+wedge = ScriptCAD.primitives.wedge
 
 -- Export transform functions
 translate = ScriptCAD.transforms.translate
