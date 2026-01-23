@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.15 - Electron-MRI Project (2026-01-23)
+ScriptKitty v0.0.16 - Electron-MRI Project (2026-01-23)
 
 ## Task Tracker
 
@@ -60,6 +60,18 @@ Replicate the Petryakov et al. 2007 "Single loop multi-gap resonator for whole b
 - Added `#[allow(dead_code)]` for public API functions not yet used internally
 - 66 tests passing (2 new B1 field tests)
 
+### Full System Verification (v0.0.16)
+- **stdlib/view.lua**: 100% complete vs spec - all camera presets, visibility, clipping, serialization
+- **stdlib/circuits.lua**: 100% complete - SignalGenerator, Amplifier, MatchingNetwork, TransducerLoad, Circuit
+- **stdlib/physics.lua**: 100% complete - magnetostatic, acoustic, acoustic_source, acoustic_boundary, current_source, linspace, logspace
+- **stdlib/groups.lua**: 100% complete - group, assembly, component with all methods
+- **stdlib/export.lua**: 100% complete - export_stl, export_3mf with queue mechanism
+- **renderer**: 100% complete - jet/viridis/plasma colormaps, XZ/XY/YZ planes, NanoVNA graph, circuit SVG overlay
+- Visual test passes with Electron-MRI.lua project
+
+### Known Limitations
+- **NanoVNA S11 for multi-gap resonators**: Uses simplified series RLC model without coupling loop impedance transformation. Shows ~0 dB across all frequencies because high-Q resonator resistance (< 1 Ohm) is never close to 50 Ohm characteristic impedance. A proper coupled resonator model would require modeling the inductive coupling between coupling loop and resonator.
+
 ## Low Priority
 
 ### 9. EPR Image Simulation
@@ -73,7 +85,16 @@ Requires spectroscopy modeling beyond current scope - would need:
 
 ## Completed (Reference)
 
-### Electron-MRI v0.0.15 (Current)
+### Electron-MRI v0.0.16 (Current)
+- Full system verification: all stdlib modules match specs
+- B1 field homogeneity visualization for SLMG resonator
+- Loaded Q computation with automatic sample detection
+- Multi-gap resonator frequency sweep at GHz frequencies
+- Modulation coils geometry
+- Housing and shield geometry
+- 66 unit tests passing, visual test passing
+
+### Electron-MRI v0.0.15
 - B1 field homogeneity visualization for SLMG resonator
 - Loaded Q computation with automatic sample detection
 - Multi-gap resonator frequency sweep at GHz frequencies
