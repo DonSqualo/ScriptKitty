@@ -22,3 +22,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+playwright-report/
+test-results/
+node_modules/
+screenshots/
