@@ -268,8 +268,8 @@ Scaffold.body = difference(
 -- ===========================
 
 local assembly = group("helmholtz_coil", {
-  -- RightCoil.body,
-  -- LeftCoil.body,
+  RightCoil.body,
+  LeftCoil.body,
   ResonatorTube.body,
   ResonatorTube.gap_dielectric,
   Bridge.body,
