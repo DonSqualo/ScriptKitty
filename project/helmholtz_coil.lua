@@ -65,10 +65,13 @@ CouplingCoilAdapter = {
   height = 15.0,              -- adapter height
   lip_height = 3.0,           -- lip to hold coil in place
   lip_thickness = 1.5,        -- lip overhang
+  stopper_height = 2.0,       -- top stopper to retain coil
+  stopper_overhang = 2.5,     -- how far stopper extends over coil
 }
 CouplingCoilAdapter.inner_radius = CouplingCoilAdapter.inner_diameter / 2
 CouplingCoilAdapter.outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.wall
 CouplingCoilAdapter.lip_outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.lip_thickness
+CouplingCoilAdapter.stopper_outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.stopper_overhang
 
 Scaffold = {
   clearance = 1.0,
@@ -192,7 +195,13 @@ local adapter_lip = difference(
   cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.lip_height + 1)
 ):centered():at(0, 0, -(CouplingCoilAdapter.height / 2) + CouplingCoilAdapter.lip_height / 2)
 
-CouplingCoilAdapter.body = union(adapter_main_body, adapter_lip)
+-- Stopper at top to retain the coil
+local adapter_stopper = difference(
+  cylinder(CouplingCoilAdapter.stopper_outer_radius, CouplingCoilAdapter.stopper_height),
+  cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.stopper_height + 1)
+):centered():at(0, 0, (CouplingCoilAdapter.height / 2) - CouplingCoilAdapter.stopper_height / 2)
+
+CouplingCoilAdapter.body = union(adapter_main_body, adapter_lip, adapter_stopper)
     :at(0, 0, CouplingCoil.z_position)
     :color(1.0, 1.0, 1.0, 1.0)
     :material(dark_pla)
