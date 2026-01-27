@@ -195,11 +195,11 @@ local adapter_lip = difference(
   cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.lip_height + 1)
 ):centered():at(0, 0, -(CouplingCoilAdapter.height / 2) + CouplingCoilAdapter.lip_height / 2)
 
--- Stopper at top to retain the coil
+-- Stopper at middle (between coil and resonator)
 local adapter_stopper = difference(
   cylinder(CouplingCoilAdapter.stopper_outer_radius, CouplingCoilAdapter.stopper_height),
   cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.stopper_height + 1)
-):centered():at(0, 0, (CouplingCoilAdapter.height / 2) - CouplingCoilAdapter.stopper_height / 2)
+):centered():at(0, 0, 0)  -- centered = halfway
 
 CouplingCoilAdapter.body = union(adapter_main_body, adapter_lip, adapter_stopper)
     :at(0, 0, CouplingCoil.z_position)
