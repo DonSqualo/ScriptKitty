@@ -1,7 +1,7 @@
 -- hallbach.lua
 -- Halbach array magnet holder system for cell culture studies
 
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 -- ===========================
 -- Configuration Parameters
@@ -547,7 +547,7 @@ local assembly = group("assembly", {
   CapInner.model,
 })
 
-ScriptCAD.register(assembly)
+Mittens.register(assembly)
 
 export_stl("cap_inner.stl", CapInner.model)
 export_stl("tight_fit_adapter.stl", DeepWellRing.model)
@@ -564,4 +564,4 @@ view({
   axes = { show = true, size = 20 },
 })
 
-return ScriptCAD.serialize()
+return Mittens.serialize()

@@ -10,7 +10,7 @@
 -- 2. 96-well plate holder adapter
 -- 3. Custom lid with ultrasound transducer holder
 
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 -- ============================================================================
 -- Configuration Parameters
@@ -229,7 +229,7 @@ local assembly = group("pure_acoustics", {
   Lid.model,
 })
 
-ScriptCAD.register(assembly)
+Mittens.register(assembly)
 
 -- Export individual STL files for 3D printing (units: mm)
 export_stl("icd.stl", icd_assembly)
@@ -268,7 +268,7 @@ local acoustic_study = acoustic({
   },
 })
 
-ScriptCAD.register(acoustic_study)
+Mittens.register(acoustic_study)
 
 
 -- ===========================
@@ -292,7 +292,7 @@ local transducer_circuit = Circuit({
   size = { 400, 90 },
 })
 
-ScriptCAD.register(transducer_circuit)
+Mittens.register(transducer_circuit)
 
 -- ============================================================================
 -- View Configuration
@@ -306,4 +306,4 @@ view({
   axes = { show = true, size = 20 },
 })
 
-return ScriptCAD.serialize()
+return Mittens.serialize()

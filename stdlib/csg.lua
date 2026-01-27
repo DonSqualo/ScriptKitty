@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: CSG (Constructive Solid Geometry)
+-- Mittens Standard Library: CSG (Constructive Solid Geometry)
 -- Boolean operations on shapes
 
 local CSG = {}

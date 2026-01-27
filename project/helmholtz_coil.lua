@@ -1,7 +1,7 @@
 -- helmholtz_coil.lua
 -- Helmholtz coil pair for uniform magnetic field generation
 
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 -- ===========================
 -- Configuration Parameters
@@ -235,7 +235,7 @@ local assembly = group("helmholtz_coil", {
   CouplingCoil.body,
 })
 
-ScriptCAD.register(assembly)
+Mittens.register(assembly)
 
 -- ===========================
 -- Physics: Magnetostatic Study
@@ -388,4 +388,4 @@ view({
   circular_segments = 64,
 })
 
-return ScriptCAD.serialize()
+return Mittens.serialize()

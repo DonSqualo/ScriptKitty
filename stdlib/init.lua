@@ -1,83 +1,83 @@
--- ScriptCAD Standard Library
+-- Mittens Standard Library
 -- Main entry point that loads all modules
 
-local ScriptCAD = {}
+local Mittens = {}
 
 -- Load all modules
-ScriptCAD.primitives = require("stdlib.primitives")
-ScriptCAD.transforms = require("stdlib.transforms")
-ScriptCAD.materials = require("stdlib.materials")
-ScriptCAD.csg = require("stdlib.csg")
-ScriptCAD.groups = require("stdlib.groups")
-ScriptCAD.instruments = require("stdlib.instruments")
-ScriptCAD.physics = require("stdlib.physics")
-ScriptCAD.view = require("stdlib.view")
-ScriptCAD.export = require("stdlib.export")
-ScriptCAD.circuits = require("stdlib.circuits")
+Mittens.primitives = require("stdlib.primitives")
+Mittens.transforms = require("stdlib.transforms")
+Mittens.materials = require("stdlib.materials")
+Mittens.csg = require("stdlib.csg")
+Mittens.groups = require("stdlib.groups")
+Mittens.instruments = require("stdlib.instruments")
+Mittens.physics = require("stdlib.physics")
+Mittens.view = require("stdlib.view")
+Mittens.export = require("stdlib.export")
+Mittens.circuits = require("stdlib.circuits")
 
 -- Export primitive functions to global scope
-box = ScriptCAD.primitives.box
-cylinder = ScriptCAD.primitives.cylinder
-sphere = ScriptCAD.primitives.sphere
-torus = ScriptCAD.primitives.torus
-ring = ScriptCAD.primitives.ring
+box = Mittens.primitives.box
+cylinder = Mittens.primitives.cylinder
+sphere = Mittens.primitives.sphere
+torus = Mittens.primitives.torus
+ring = Mittens.primitives.ring
 
 -- Export transform functions
-translate = ScriptCAD.transforms.translate
-rotate = ScriptCAD.transforms.rotate
-scale = ScriptCAD.transforms.scale
-mirror = ScriptCAD.transforms.mirror
-linear_pattern = ScriptCAD.transforms.linear_pattern
-circular_pattern = ScriptCAD.transforms.circular_pattern
-Vec3 = ScriptCAD.transforms.Vec3
-Mat4 = ScriptCAD.transforms.Mat4
+translate = Mittens.transforms.translate
+rotate = Mittens.transforms.rotate
+scale = Mittens.transforms.scale
+mirror = Mittens.transforms.mirror
+linear_pattern = Mittens.transforms.linear_pattern
+circular_pattern = Mittens.transforms.circular_pattern
+Vec3 = Mittens.transforms.Vec3
+Mat4 = Mittens.transforms.Mat4
 
 -- Export CSG functions
-union = ScriptCAD.csg.union
-difference = ScriptCAD.csg.difference
-intersect = ScriptCAD.csg.intersect
+union = Mittens.csg.union
+difference = Mittens.csg.difference
+intersect = Mittens.csg.intersect
 
 -- Export group functions
-group = ScriptCAD.groups.group
-assembly = ScriptCAD.groups.assembly
-component = ScriptCAD.groups.component
+group = Mittens.groups.group
+assembly = Mittens.groups.assembly
+component = Mittens.groups.component
 
 -- Export material functions
-material = ScriptCAD.materials.material
+material = Mittens.materials.material
 
 -- Export view functions
-view = ScriptCAD.view.view
+view = Mittens.view.view
 
 -- Export physics functions
-magnetostatic = ScriptCAD.physics.magnetostatic
-acoustic = ScriptCAD.physics.acoustic
-acoustic_source = ScriptCAD.physics.acoustic_source
-acoustic_boundary = ScriptCAD.physics.acoustic_boundary
-current_source = ScriptCAD.physics.current_source
-linspace = ScriptCAD.physics.linspace
-logspace = ScriptCAD.physics.logspace
+magnetostatic = Mittens.physics.magnetostatic
+acoustic = Mittens.physics.acoustic
+acoustic_source = Mittens.physics.acoustic_source
+acoustic_boundary = Mittens.physics.acoustic_boundary
+current_source = Mittens.physics.current_source
+linspace = Mittens.physics.linspace
+logspace = Mittens.physics.logspace
 
 -- Export instrument functions
-Probe = ScriptCAD.instruments.Probe
-GaussMeter = ScriptCAD.instruments.GaussMeter
-MagneticFieldPlane = ScriptCAD.instruments.MagneticFieldPlane
-AcousticPressurePlane = ScriptCAD.instruments.AcousticPressurePlane
-Hydrophone = ScriptCAD.instruments.Hydrophone
+Probe = Mittens.instruments.Probe
+GaussMeter = Mittens.instruments.GaussMeter
+MagneticFieldPlane = Mittens.instruments.MagneticFieldPlane
+AcousticPressurePlane = Mittens.instruments.AcousticPressurePlane
+Hydrophone = Mittens.instruments.Hydrophone
 
 -- Export file functions
-export_stl = ScriptCAD.export.export_stl
-export_3mf = ScriptCAD.export.export_3mf
+export_stl = Mittens.export.export_stl
+export_3mf = Mittens.export.export_3mf
 
 -- Export circuit functions
-SignalGenerator = ScriptCAD.circuits.SignalGenerator
-Amplifier = ScriptCAD.circuits.Amplifier
-MatchingNetwork = ScriptCAD.circuits.MatchingNetwork
-TransducerLoad = ScriptCAD.circuits.TransducerLoad
-Circuit = ScriptCAD.circuits.Circuit
+SignalGenerator = Mittens.circuits.SignalGenerator
+Amplifier = Mittens.circuits.Amplifier
+MatchingNetwork = Mittens.circuits.MatchingNetwork
+TransducerLoad = Mittens.circuits.TransducerLoad
+Circuit = Mittens.circuits.Circuit
 
 
 -- Scene registry
-ScriptCAD._scene = {
+Mittens._scene = {
   objects = {},
   instruments = {},
   studies = {},
@@ -86,34 +86,34 @@ ScriptCAD._scene = {
 
 --- Register an object in the scene
 -- @param obj Object to register
-function ScriptCAD.register(obj)
+function Mittens.register(obj)
   if obj._type == "instrument" then
-    table.insert(ScriptCAD._scene.instruments, obj)
+    table.insert(Mittens._scene.instruments, obj)
   elseif obj._type == "study" then
-    table.insert(ScriptCAD._scene.studies, obj)
+    table.insert(Mittens._scene.studies, obj)
   elseif obj._type == "visualization" then
-    table.insert(ScriptCAD._scene.instruments, obj)
+    table.insert(Mittens._scene.instruments, obj)
   else
-    table.insert(ScriptCAD._scene.objects, obj)
+    table.insert(Mittens._scene.objects, obj)
   end
 end
 
 --- Get the full scene for rendering
 -- @return Scene data
-function ScriptCAD.get_scene()
+function Mittens.get_scene()
   return {
-    objects = ScriptCAD._scene.objects,
-    instruments = ScriptCAD.instruments.serialize_all(),
-    studies = ScriptCAD.physics.get_studies(),
-    exports = ScriptCAD.export.serialize(),
-    view = ScriptCAD.view.serialize(),
+    objects = Mittens._scene.objects,
+    instruments = Mittens.instruments.serialize_all(),
+    studies = Mittens.physics.get_studies(),
+    exports = Mittens.export.serialize(),
+    view = Mittens.view.serialize(),
   }
 end
 
 --- Serialize the entire scene to JSON-compatible format
 -- @return Serialized scene
-function ScriptCAD.serialize()
-  local scene = ScriptCAD.get_scene()
+function Mittens.serialize()
+  local scene = Mittens.get_scene()
 
   -- Serialize objects
   local objects_serialized = {}
@@ -141,21 +141,21 @@ function ScriptCAD.serialize()
 end
 
 --- Clear the scene
-function ScriptCAD.clear()
-  ScriptCAD._scene = {
+function Mittens.clear()
+  Mittens._scene = {
     objects = {},
     instruments = {},
     studies = {},
     exports = {},
   }
-  ScriptCAD.instruments.clear()
-  ScriptCAD.physics.clear()
-  ScriptCAD.export.clear()
-  ScriptCAD.view.reset()
+  Mittens.instruments.clear()
+  Mittens.physics.clear()
+  Mittens.export.clear()
+  Mittens.view.reset()
 end
 
 -- Version info
-ScriptCAD.VERSION = "0.1.0"
-ScriptCAD.NAME = "ScriptCAD"
+Mittens.VERSION = "0.1.0"
+Mittens.NAME = "Mittens"
 
-return ScriptCAD
+return Mittens

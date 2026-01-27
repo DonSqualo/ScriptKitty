@@ -1,4 +1,4 @@
-//! ScriptCAD Server - Manifold CSG
+//! Mittens Server - Manifold CSG
 //! - File watcher
 //! - Lua parser
 //! - Manifold mesh generation

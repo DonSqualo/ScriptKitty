@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: View
+-- Mittens Standard Library: View
 -- Camera, visibility, and rendering configuration
 
 local View = {}

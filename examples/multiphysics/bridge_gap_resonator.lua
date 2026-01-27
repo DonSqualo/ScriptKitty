@@ -10,7 +10,7 @@
 -- - View configuration with clipping
 
 -- Load standard library
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 -- ============================================================================
 -- Configuration Parameters
@@ -152,7 +152,7 @@ local assembly = group("bridge_gap_resonator", {
 })
 
 -- Register with scene
-ScriptCAD.register(assembly)
+Mittens.register(assembly)
 
 -- ============================================================================
 -- Physics Setup: Electromagnetic Study
@@ -274,4 +274,4 @@ view({
 -- Return scene for renderer
 -- ============================================================================
 
-return ScriptCAD.serialize()
+return Mittens.serialize()
