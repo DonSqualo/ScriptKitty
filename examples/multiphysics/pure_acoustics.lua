@@ -29,7 +29,7 @@ Oring = {
 }
 
 MetalBase = {
-  outer_diameter = 35.5,
+  outer_diameter = 35,
   inner_diameter = 30.5,
   height = 5,
   lip_height = 1.5,
@@ -37,7 +37,7 @@ MetalBase = {
 }
 
 PolyTube = {
-  outer_diameter = 32.5,
+  outer_diameter = 30,
   inner_diameter = 26,
   height = 40,
 }
@@ -54,12 +54,11 @@ Microscope.width = Microscope.WellPlate.width + 20
 Microscope.WellPlate.offset = Microscope.height - 2
 
 HolderAdapter = {
-  length = 128,
-  width = 86,
   tolerance = 0.5,
-  height = 8,
-  offset = 1
+  height = Microscope.WellPlate.offset
 }
+HolderAdapter.length = Microscope.WellPlate.length - 2 * HolderAdapter.tolerance
+HolderAdapter.width = Microscope.WellPlate.width - 2 * HolderAdapter.tolerance
 
 Medium = {
   liquid_height = PolyTube.height - 2
@@ -162,7 +161,6 @@ Microscope.model = difference(
 
 HolderAdapter.model = difference(
       box(HolderAdapter.length, HolderAdapter.width, HolderAdapter.height):centerXY(),
-      cylinder(MetalBase.outer_diameter / 2, HolderAdapter.height):at(0, 0, HolderAdapter.offset),
       cylinder(MetalBase.inner_diameter / 2, HolderAdapter.height)
     )
     :at(0, 0, -HolderAdapter.height)

@@ -264,6 +264,9 @@ pub fn generate_circuit_svg(components: &[CircuitComponent], width: f64, height:
 
 // ===========================
 
+/// Circuit AC analysis results for impedance matching and power transfer
+/// These fields are part of the public API for circuit analysis
+#[allow(dead_code)]
 pub struct CircuitAnalysis {
     pub frequency: f64,
     pub input_impedance: (f64, f64),
@@ -273,18 +276,24 @@ pub struct CircuitAnalysis {
     pub s11_db: f64,
 }
 
+// Complex number arithmetic helpers for circuit AC analysis
+// Used by analyze_circuit_ac and tests
+#[allow(dead_code)]
 fn complex_add(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 + b.0, a.1 + b.1)
 }
 
+#[allow(dead_code)]
 fn complex_sub(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 - b.0, a.1 - b.1)
 }
 
+#[allow(dead_code)]
 fn complex_mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
 }
 
+#[allow(dead_code)]
 fn complex_div(num: (f64, f64), den: (f64, f64)) -> (f64, f64) {
     let den_mag_sq = den.0 * den.0 + den.1 * den.1;
     let real = (num.0 * den.0 + num.1 * den.1) / den_mag_sq;
@@ -292,16 +301,21 @@ fn complex_div(num: (f64, f64), den: (f64, f64)) -> (f64, f64) {
     (real, imag)
 }
 
+#[allow(dead_code)]
 fn complex_mag(z: (f64, f64)) -> f64 {
     (z.0 * z.0 + z.1 * z.1).sqrt()
 }
 
+#[allow(dead_code)]
 fn complex_parallel(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
     let num = complex_mul(a, b);
     let den = complex_add(a, b);
     complex_div(num, den)
 }
 
+/// Perform AC analysis on a circuit chain to compute impedance matching and power transfer
+/// Part of the public API for circuit analysis, used by tests
+#[allow(dead_code)]
 pub fn analyze_circuit_ac(components: &[CircuitComponent], frequency: f64) -> CircuitAnalysis {
     let omega = 2.0 * PI * frequency;
     let z_source = 50.0;

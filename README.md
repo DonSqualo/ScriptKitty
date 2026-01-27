@@ -60,6 +60,7 @@ stdlib/           # Lua standard library
 renderer/         # WebGPU frontend (Three.js)
 server/           # Rust backend (Manifold CSG)
 examples/         # Example scripts
+specs/            # Feature specifications
 ```
 
 ## Features
@@ -74,6 +75,10 @@ examples/         # Example scripts
 - **Export** — STL, 3MF
 
 ## Examples
+
+### Electron-MRI (Current Project)
+
+`project/Electron-MRI.lua` — Single Loop Multi-Gap resonator for EPR imaging based on Petryakov et al. 2007.
 
 ### Helmholtz Coil with Bridge Gap Resonator
 

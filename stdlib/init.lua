@@ -21,6 +21,7 @@ cylinder = Mittens.primitives.cylinder
 sphere = Mittens.primitives.sphere
 torus = Mittens.primitives.torus
 ring = Mittens.primitives.ring
+wedge = Mittens.primitives.wedge
 
 -- Export transform functions
 translate = Mittens.transforms.translate

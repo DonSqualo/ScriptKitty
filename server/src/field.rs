@@ -515,6 +515,205 @@ pub fn compute_helmholtz_field(
 }
 
 // ===========================
+// B1 Field Visualization for Loop-Gap Resonators (EPR/NMR)
+// Based on: Petryakov et al. J. Magn. Reson. 188 (2007) 68-73
+//
+// In a loop-gap resonator, the B1 field is approximately uniform inside the bore.
+// The RF magnetic field circulates around the gaps, creating an axially-oriented
+// B1 field inside the resonator that is used for EPR/NMR excitation.
+// ===========================
+
+/// Configuration for B1 field computation in loop-gap resonators
+/// num_gaps and resonant_frequency are stored for API completeness
+/// and potential future use in field magnitude calculations
+#[allow(dead_code)]
+pub struct B1FieldConfig {
+    pub inner_radius: f64,      // Inner bore radius (mm)
+    pub outer_radius: f64,      // Outer radius (mm)
+    pub length: f64,            // Resonator length (mm)
+    pub num_gaps: u32,          // Number of capacitive gaps
+    pub resonant_frequency: f64, // Operating frequency (Hz)
+}
+
+/// Compute B1 field distribution for a loop-gap resonator
+/// The B1 field inside the bore is approximately uniform and axially oriented.
+/// Field magnitude decays rapidly outside the resonator.
+pub fn compute_b1_field(
+    config: &B1FieldConfig,
+    plane: PlaneType,
+    plane_offset: f64,
+    colormap: Colormap,
+) -> FieldData {
+    // For a loop-gap resonator, B1 field is approximately uniform inside the bore
+    // and decays outside. The field is predominantly axially oriented (along Z).
+
+    let slice_width = 80;
+    let slice_height = 80;
+
+    // Set visualization extents
+    let extent = config.outer_radius * 1.5;
+    let z_extent = config.length;
+
+    let (axis1_min, axis1_max, axis2_min, axis2_max) = match plane {
+        PlaneType::XZ => (-extent, extent, -z_extent, z_extent),
+        PlaneType::XY => (-extent, extent, -extent, extent),
+        PlaneType::YZ => (-extent, extent, -z_extent, z_extent),
+    };
+
+    let mut slice_bx = Vec::with_capacity(slice_width * slice_height);
+    let mut slice_bz = Vec::with_capacity(slice_width * slice_height);
+    let mut slice_magnitude = Vec::with_capacity(slice_width * slice_height);
+
+    // B1 field model for loop-gap resonator:
+    // - Inside bore (r < inner_radius, |z| < length/2): uniform B1 along Z axis
+    // - In gap region: complex field pattern (simplified here)
+    // - Outside: rapid decay
+
+    let b1_max = 1.0; // Normalized to 1.0 (relative units)
+
+    for j in 0..slice_height {
+        let axis2 = axis2_min + (j as f64 + 0.5) * (axis2_max - axis2_min) / slice_height as f64;
+        for i in 0..slice_width {
+            let axis1 = axis1_min + (i as f64 + 0.5) * (axis1_max - axis1_min) / slice_width as f64;
+
+            let (x, y, z) = match plane {
+                PlaneType::XZ => (axis1, plane_offset, axis2),
+                PlaneType::XY => (axis1, axis2, plane_offset),
+                PlaneType::YZ => (plane_offset, axis1, axis2),
+            };
+
+            let r = (x * x + y * y).sqrt();
+            let z_rel = z.abs() / (config.length / 2.0);
+
+            // Compute B1 field magnitude based on position
+            let b1_z = if r < config.inner_radius && z_rel < 1.0 {
+                // Inside the bore: approximately uniform B1
+                // Small radial variation for realistic appearance
+                let radial_factor = 1.0 - 0.05 * (r / config.inner_radius).powi(2);
+                // Axial variation near edges
+                let axial_factor = if z_rel > 0.8 {
+                    1.0 - 0.3 * ((z_rel - 0.8) / 0.2).powi(2)
+                } else {
+                    1.0
+                };
+                b1_max * radial_factor * axial_factor
+            } else if r < config.outer_radius && z_rel < 1.2 {
+                // In the gap/resonator wall region: reduced field
+                let wall_decay = ((config.outer_radius - r) / (config.outer_radius - config.inner_radius)).max(0.0);
+                b1_max * 0.3 * wall_decay
+            } else {
+                // Outside resonator: rapid exponential decay
+                let r_decay = if r > config.outer_radius {
+                    (-(r - config.outer_radius) / (config.inner_radius * 0.5)).exp()
+                } else {
+                    1.0
+                };
+                let z_decay = if z_rel > 1.0 {
+                    (-(z_rel - 1.0) * 2.0).exp()
+                } else {
+                    1.0
+                };
+                b1_max * 0.1 * r_decay * z_decay
+            };
+
+            // B1 field is predominantly axial (Z-directed)
+            let bx = 0.0;
+            let by = 0.0;
+            let bz = b1_z;
+            let mag = (bx * bx + by * by + bz * bz).sqrt();
+
+            let (b1, b2) = match plane {
+                PlaneType::XZ => (bx, bz),
+                PlaneType::XY => (bx, by),
+                PlaneType::YZ => (by, bz),
+            };
+
+            slice_bx.push(b1 as f32);
+            slice_bz.push(b2 as f32);
+            slice_magnitude.push(mag as f32);
+        }
+    }
+
+    let slice_bounds = [axis1_min, axis1_max, axis2_min, axis2_max];
+
+    // 3D arrow field for B1 visualization
+    let arrow_grid = 8;
+    let mut arrows_positions = Vec::new();
+    let mut arrows_vectors = Vec::new();
+    let mut arrows_magnitudes = Vec::new();
+
+    let arrow_extent = config.inner_radius * 0.8;
+    let arrow_z_extent = config.length * 0.4;
+
+    for k in 0..arrow_grid {
+        let z = -arrow_z_extent + (k as f64 + 0.5) * 2.0 * arrow_z_extent / arrow_grid as f64;
+        for j in 0..arrow_grid {
+            let y = -arrow_extent + (j as f64 + 0.5) * 2.0 * arrow_extent / arrow_grid as f64;
+            for i in 0..arrow_grid {
+                let x = -arrow_extent + (i as f64 + 0.5) * 2.0 * arrow_extent / arrow_grid as f64;
+
+                let r = (x * x + y * y).sqrt();
+                if r > config.inner_radius * 0.9 {
+                    continue;
+                }
+
+                // B1 field inside bore is predominantly Z-directed
+                let bz = b1_max;
+                let mag = bz.abs();
+
+                if mag > 0.01 {
+                    arrows_positions.push(x as f32);
+                    arrows_positions.push(y as f32);
+                    arrows_positions.push(z as f32);
+
+                    arrows_vectors.push(0.0);
+                    arrows_vectors.push(0.0);
+                    arrows_vectors.push(1.0);
+
+                    arrows_magnitudes.push(mag as f32);
+                }
+            }
+        }
+    }
+
+    // 1D line along Z axis
+    let line_points = 101;
+    let mut line_z = Vec::with_capacity(line_points);
+    let mut line_bz = Vec::with_capacity(line_points);
+
+    for i in 0..line_points {
+        let z = -z_extent + i as f64 * (2.0 * z_extent) / (line_points - 1) as f64;
+        let z_rel = z.abs() / (config.length / 2.0);
+
+        let bz = if z_rel < 1.0 {
+            b1_max * (1.0 - 0.1 * z_rel.powi(2))
+        } else {
+            b1_max * (-(z_rel - 1.0) * 3.0).exp()
+        };
+
+        line_z.push(z as f32);
+        line_bz.push(bz as f32);
+    }
+
+    FieldData {
+        plane_type: plane,
+        colormap,
+        slice_width,
+        slice_height,
+        slice_bounds,
+        slice_offset: plane_offset,
+        slice_bx,
+        slice_bz,
+        slice_magnitude,
+        arrows_positions,
+        arrows_vectors,
+        arrows_magnitudes,
+        line_z,
+        line_bz,
+    }
+}
+
+// ===========================
 
 #[cfg(test)]
 mod tests {
@@ -751,6 +950,58 @@ mod tests {
         assert_eq!(Colormap::from_str("VIRIDIS"), Colormap::Viridis);
         assert_eq!(Colormap::from_str("plasma"), Colormap::Plasma);
         assert_eq!(Colormap::from_str("unknown"), Colormap::Jet);
+    }
+
+    #[test]
+    fn test_b1_field_uniform_inside_bore() {
+        // B1 field should be approximately uniform inside the resonator bore
+        let config = B1FieldConfig {
+            inner_radius: 21.0,
+            outer_radius: 44.0,
+            length: 48.0,
+            num_gaps: 16,
+            resonant_frequency: 1.2e9,
+        };
+
+        let field_data = compute_b1_field(&config, PlaneType::XY, 0.0, Colormap::Jet);
+
+        // Check structure
+        assert_eq!(field_data.slice_width, 80);
+        assert_eq!(field_data.slice_height, 80);
+        assert!(field_data.line_z.len() > 0);
+        assert!(field_data.arrows_positions.len() > 0);
+
+        // Field at center should be close to maximum
+        let center_idx = (field_data.slice_height / 2) * field_data.slice_width + field_data.slice_width / 2;
+        assert!(
+            field_data.slice_magnitude[center_idx] > 0.9,
+            "B1 at center should be high, got {}",
+            field_data.slice_magnitude[center_idx]
+        );
+    }
+
+    #[test]
+    fn test_b1_field_decays_outside() {
+        let config = B1FieldConfig {
+            inner_radius: 21.0,
+            outer_radius: 44.0,
+            length: 48.0,
+            num_gaps: 16,
+            resonant_frequency: 1.2e9,
+        };
+
+        let field_data = compute_b1_field(&config, PlaneType::XY, 0.0, Colormap::Jet);
+
+        // Field at edge should be lower than center
+        let center_idx = (field_data.slice_height / 2) * field_data.slice_width + field_data.slice_width / 2;
+        let edge_idx = 0; // Corner
+
+        assert!(
+            field_data.slice_magnitude[edge_idx] < field_data.slice_magnitude[center_idx],
+            "B1 should decay outside bore: edge={}, center={}",
+            field_data.slice_magnitude[edge_idx],
+            field_data.slice_magnitude[center_idx]
+        );
     }
 
     #[test]

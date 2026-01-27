@@ -302,6 +302,101 @@ fn build_manifold_primitive(obj_type: &str, params: &mlua::Table, circular_segme
 
             Ok(outer.difference(&inner))
         }
+        "wedge" => {
+            // Wedge (annular sector with height) for radial resonator segments
+            // Built as parametric mesh with position and normal data
+            let inner_radius: f64 = params.get("inner_radius")?;
+            let outer_radius: f64 = params.get("outer_radius")?;
+            let h: f64 = params.get("h")?;
+            let sweep_angle: f64 = params.get("sweep_angle")?;
+
+            let half_angle = sweep_angle.to_radians() / 2.0;
+            let arc_segments = ((circular_segments as f64 * sweep_angle / 360.0).ceil() as usize).max(4);
+
+            // 4 arcs: inner_bottom, outer_bottom, inner_top, outer_top
+            let n = arc_segments + 1;
+            let num_verts = n * 4;
+            let mut vert_props: Vec<f32> = Vec::with_capacity(num_verts * 6);
+
+            // Generate vertices with positions and normals
+            for layer in 0..2 {
+                let z = if layer == 0 { 0.0 } else { h };
+                for ring_idx in 0..2 {
+                    let r = if ring_idx == 0 { inner_radius } else { outer_radius };
+                    // Normal direction for inner vs outer
+                    let n_sign = if ring_idx == 0 { -1.0 } else { 1.0 };
+                    for i in 0..n {
+                        let t = i as f64 / arc_segments as f64;
+                        let angle = -half_angle + t * 2.0 * half_angle;
+                        let x = r * angle.cos();
+                        let y = r * angle.sin();
+                        // Radial normal (pointing inward for inner, outward for outer)
+                        let nx = n_sign * angle.cos();
+                        let ny = n_sign * angle.sin();
+                        vert_props.extend_from_slice(&[
+                            x as f32, y as f32, z as f32,
+                            nx as f32, ny as f32, 0.0,
+                        ]);
+                    }
+                }
+            }
+
+            let mut indices: Vec<u32> = Vec::new();
+            let n32 = n as u32;
+            let ib = 0u32;
+            let ob = n32;
+            let it = 2 * n32;
+            let ot = 3 * n32;
+
+            // Bottom face (normal -Z)
+            for i in 0..(n32 - 1) {
+                indices.extend_from_slice(&[ib + i, ib + i + 1, ob + i]);
+                indices.extend_from_slice(&[ib + i + 1, ob + i + 1, ob + i]);
+            }
+
+            // Top face (normal +Z)
+            for i in 0..(n32 - 1) {
+                indices.extend_from_slice(&[it + i, ot + i, it + i + 1]);
+                indices.extend_from_slice(&[it + i + 1, ot + i, ot + i + 1]);
+            }
+
+            // Inner face
+            for i in 0..(n32 - 1) {
+                indices.extend_from_slice(&[ib + i, it + i, ib + i + 1]);
+                indices.extend_from_slice(&[ib + i + 1, it + i, it + i + 1]);
+            }
+
+            // Outer face
+            for i in 0..(n32 - 1) {
+                indices.extend_from_slice(&[ob + i, ob + i + 1, ot + i]);
+                indices.extend_from_slice(&[ob + i + 1, ot + i + 1, ot + i]);
+            }
+
+            // Start cap
+            indices.extend_from_slice(&[ib, ob, it]);
+            indices.extend_from_slice(&[ob, ot, it]);
+
+            // End cap
+            let last = n32 - 1;
+            indices.extend_from_slice(&[ib + last, it + last, ob + last]);
+            indices.extend_from_slice(&[ob + last, it + last, ot + last]);
+
+            let num_tris = indices.len() / 3;
+
+            let wedge: Manifold = unsafe {
+                let mesh_ptr = manifold_meshgl(
+                    manifold_alloc_meshgl(),
+                    vert_props.as_ptr(),
+                    num_verts,
+                    6,
+                    indices.as_ptr(),
+                    num_tris,
+                );
+                let manifold_ptr = manifold_of_meshgl(manifold_alloc_manifold(), mesh_ptr);
+                std::mem::transmute(manifold_ptr)
+            };
+            Ok(wedge)
+        }
         _ => Err(anyhow!("Unknown primitive type: {}", obj_type)),
     }
 }
@@ -670,6 +765,8 @@ pub fn build_object_manifold(table: &mlua::Table, circular_segments: u32) -> Res
 }
 
 /// Build mesh from a serialized object using Manifold, with optional degenerate triangle removal
+/// Provided as a public API for mesh cleanup, may not be used internally
+#[allow(dead_code)]
 pub fn build_object_manifold_clean(table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
     let mut mesh = build_mesh_recursive(table, circular_segments)?;
     if remove_degenerates {
@@ -719,6 +816,8 @@ pub fn generate_mesh_from_object_manifold(_lua: &Lua, table: &mlua::Table, circu
 }
 
 /// Generate mesh from a single serialized object using Manifold, with optional degenerate triangle removal
+/// Provided as a public API for mesh cleanup, may not be used internally
+#[allow(dead_code)]
 pub fn generate_mesh_from_object_manifold_clean(_lua: &Lua, table: &mlua::Table, circular_segments: u32, remove_degenerates: bool) -> Result<MeshData> {
     build_object_manifold_clean(table, circular_segments, remove_degenerates)
 }
@@ -781,12 +880,16 @@ pub fn remove_degenerate_triangles(mesh: &mut MeshData) -> usize {
 }
 
 /// Validation result with warnings
+/// Part of the public API for debugging mesh issues
+#[allow(dead_code)]
 pub struct MeshValidation {
     pub valid: bool,
     pub warnings: Vec<String>,
 }
 
 /// Validate mesh for common issues
+/// Part of the public API for debugging mesh issues
+#[allow(dead_code)]
 pub fn validate_mesh(mesh: &MeshData) -> MeshValidation {
     let mut warnings = Vec::new();
     let mut valid = true;

@@ -20,7 +20,7 @@ Wire.pitch = Wire.diameter / Wire.packing_factor
 
 Coil = {
   mean_radius = 50,
-  gap = 42.5,
+  gap = 29,
   windings = 120,
   layers = 12,
   current = 2.0,
@@ -160,8 +160,8 @@ CouplingCoil.inner_radius = CouplingCoil.radius - CouplingCoil.wire_diameter / 2
 CouplingCoil.outer_radius = CouplingCoil.radius + CouplingCoil.wire_diameter / 2
 
 CouplingCoil.body = ring(CouplingCoil.inner_radius, CouplingCoil.outer_radius, CouplingCoil.wire_diameter)
-    :at(0, 0, CouplingCoil.z_position - CouplingCoil.wire_diameter / 2)
-    :material(copper)
+  :at(0, 0, CouplingCoil.z_position - CouplingCoil.wire_diameter / 2)
+  :material(copper)
 
 -- ===========================
 -- Geometry: Scaffold
@@ -209,7 +209,7 @@ local resonator_cutout = cylinder(Resonator.outer_radius + Scaffold.clearance, S
 
 local bridge_cutout = box(
   Bridge.width + 2 * Scaffold.bridge_clearance,
-  1.15 * Bridge.outer_radius + Scaffold.bridge_clearance,
+  Bridge.outer_radius + Scaffold.bridge_clearance,
   Scaffold.box_height * 2 + 2
 ):center(true, false, true)
 
