@@ -194,7 +194,7 @@ local adapter_lip = difference(
 
 CouplingCoilAdapter.body = union(adapter_main_body, adapter_lip)
     :at(0, 0, CouplingCoil.z_position)
-    :color(0.2, 0.2, 0.2, 1.0)
+    :color(1.0, 1.0, 1.0, 1.0)
     :material(dark_pla)
 
 -- ===========================
@@ -259,8 +259,8 @@ Scaffold.body = difference(
 -- ===========================
 
 local assembly = group("helmholtz_coil", {
-  RightCoil.body,
-  LeftCoil.body,
+  -- RightCoil.body,
+  -- LeftCoil.body,
   ResonatorTube.body,
   ResonatorTube.gap_dielectric,
   Bridge.body,
