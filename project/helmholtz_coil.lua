@@ -65,8 +65,8 @@ CouplingCoilAdapter = {
   height = 15.0,              -- adapter height
   lip_height = 3.0,           -- lip to hold coil in place
   lip_thickness = 1.5,        -- lip overhang
-  stopper_height = 2.0,       -- top stopper to retain coil
-  stopper_overhang = 2.5,     -- how far stopper extends over coil
+  stopper_height = 3.0,       -- top stopper to retain coil
+  stopper_overhang = 4.0,     -- how far stopper extends over coil
 }
 CouplingCoilAdapter.inner_radius = CouplingCoilAdapter.inner_diameter / 2
 CouplingCoilAdapter.outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.wall
