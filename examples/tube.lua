@@ -1,6 +1,6 @@
 -- Minimal parametric tube example using stdlib
 
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 local config = {
   outer_radius = 15,
@@ -15,6 +15,6 @@ local tube_inner = cylinder(config.inner_radius, config.height + 2)
 local tube = difference(tube_outer, tube_inner)
     :name("tube")
 
-ScriptCAD.register(tube)
+Mittens.register(tube)
 
-return ScriptCAD.serialize()
+return Mittens.serialize()

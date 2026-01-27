@@ -16,7 +16,7 @@ pub fn write_stl(mesh: &MeshData, path: &Path) -> std::io::Result<()> {
 
     // 80-byte header (padded with zeros)
     let mut header = [0u8; 80];
-    let text = b"ScriptCAD STL - units: mm";
+    let text = b"Mittens STL - units: mm";
     header[..text.len()].copy_from_slice(text);
     writer.write_all(&header)?;
 
@@ -372,7 +372,7 @@ mod tests {
 
         // Check header
         assert!(
-            data[..25].starts_with(b"ScriptCAD STL"),
+            data[..25].starts_with(b"Mittens STL"),
             "STL header mismatch"
         );
 

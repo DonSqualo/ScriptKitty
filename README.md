@@ -1,9 +1,12 @@
-# ScriptKitten
+# Mittens 🐱
+
+*"My CAD's breath smells like cat food."* — Ralph Wiggum, probably
+
+[![Mittens](https://static.wikia.nocookie.net/simpsons/images/a/ad/Snookums.jpg/revision/latest/smart/width/386/height/259?cb=20191119154645)](https://simpsons.fandom.com/wiki/Mittens)
 
 A script-first CAD system with multiphysics simulation capabilities for designing ultrasound and MRI components. OpenSCAD-inspired Lua scripting with real-time preview.
 
-
-{ cat PROMPTx1.md; echo ""; } | cc
+Named after Ralph Wiggum's cat, because every good CAD needs a feline mascot, and this one runs on `ralph.sh`.
 
 ## Running
 
@@ -23,7 +26,7 @@ Open http://localhost:3000 in Chrome/Edge (WebGPU required).
 ## Example
 
 ```lua
-local ScriptCAD = require("stdlib")
+local Mittens = require("stdlib")
 
 Coverslip = {
   diameter = 30,
@@ -46,30 +49,35 @@ Oring.model = difference(
 
 local assembly = group("assembly", { Coverslip.model, Oring.model })
 
-ScriptCAD.register(assembly)
-return ScriptCAD.serialize()
+Mittens.register(assembly)
+return Mittens.serialize()
 ```
 
 ## Project Structure
 
 ```
 stdlib/           # Lua standard library
-renderer/         # WebGPU frontend
-server/           # Rust backend
+renderer/         # WebGPU frontend (Three.js)
+server/           # Rust backend (Manifold CSG)
 examples/         # Example scripts
 ```
+
+## Features
+
+- **Lua scripting** — OpenSCAD-inspired syntax with full Lua power
+- **Real-time preview** — Hot reload on file changes
+- **Multiphysics simulation**
+  - Magnetic field (Biot-Savart, Helmholtz coils)
+  - Acoustic pressure (Rayleigh-Sommerfeld)
+  - NanoVNA S11 frequency sweep
+  - Circuit analysis
+- **Export** — STL, 3MF
 
 ## Examples
 
 ### Helmholtz Coil with Bridge Gap Resonator
 
-`examples/multiphysics/helmholtz_coil.lua` - A Helmholtz coil pair with a bridge gap resonator for uniform magnetic field generation.
-
-Includes a 3D printable scaffold (`helmholtz_scaffold.stl`) with:
-- Tube that fits inside the coil inner radius
-- Stoppers at coil ends and inside the gap
-- Box support for the resonator tube with bridge cutout
-- Axial hole through the coil axis
+`examples/multiphysics/bridge_gap_resonator.lua` — Helmholtz coil pair with a bridge gap resonator for uniform magnetic field generation.
 
 ## License
 

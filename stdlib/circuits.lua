@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Circuits
+-- Mittens Standard Library: Circuits
 -- Circuit diagram components for ultrasound drive electronics
 -- Backend: server/src/circuit.rs generates SVG schematic overlay
 

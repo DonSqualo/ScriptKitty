@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Primitives
+-- Mittens Standard Library: Primitives
 -- Basic geometric primitives using Signed Distance Functions (SDF)
 
 local Primitives = {}

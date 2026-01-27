@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Instruments
+-- Mittens Standard Library: Instruments
 -- Virtual measurement and visualization instruments
 
 local Instruments = {}

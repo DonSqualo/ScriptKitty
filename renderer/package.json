@@ -1,7 +1,7 @@
 {
-  "name": "scriptcad-renderer",
+  "name": "mittens-renderer",
   "version": "0.1.0",
-  "description": "WebGL renderer for ScriptCAD using Three.js",
+  "description": "WebGL renderer for Mittens using Three.js",
   "type": "module",
   "scripts": {
     "dev": "vite",

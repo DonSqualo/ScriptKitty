@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Materials
+-- Mittens Standard Library: Materials
 -- Physical material definitions for simulation and rendering
 
 local Materials = {}

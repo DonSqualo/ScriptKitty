@@ -1,6 +1,6 @@
 # Implementation Plan
 
-ScriptKitty v0.0.13 - Prioritized implementation backlog (2026-01-22).
+Mittens v0.0.13 - Prioritized implementation backlog (2026-01-22).
 
 # Very High Priority
 

@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Groups
+-- Mittens Standard Library: Groups
 -- Hierarchical grouping of shapes
 
 local Groups = {}

@@ -12,7 +12,7 @@ Technical details for Claude agents working on this codebase.
                                       │ .lua files
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      Rust Server (scriptcad-server)                      │
+│                      Rust Server (mittens-server)                      │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
 │  │ File        │  │ Lua         │  │ Geometry    │  │ WebSocket   │    │
 │  │ Watcher     │─▶│ Runner      │─▶│ (manifold)  │─▶│ Server      │    │

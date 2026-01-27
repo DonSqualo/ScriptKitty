@@ -1,4 +1,4 @@
-# ScriptKitty Architecture Overview
+# Mittens Architecture Overview
 
 For Claude agents working on this codebase.
 

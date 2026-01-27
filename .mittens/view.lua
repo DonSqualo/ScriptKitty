@@ -1,4 +1,4 @@
--- ScriptCAD View State
+-- Mittens View State
 -- This file is auto-saved to persist camera position and visibility settings
 -- You can edit it manually or it will be updated when you change the view
 

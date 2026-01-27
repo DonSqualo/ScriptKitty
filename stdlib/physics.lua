@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Physics
+-- Mittens Standard Library: Physics
 -- Physics simulation setup and configuration
 
 local Physics = {}

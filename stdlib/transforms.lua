@@ -1,4 +1,4 @@
--- ScriptCAD Standard Library: Transforms
+-- Mittens Standard Library: Transforms
 -- Transformation operations for shapes
 
 local Transforms = {}
