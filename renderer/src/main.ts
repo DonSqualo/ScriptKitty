@@ -271,7 +271,7 @@ function value_to_color_plasma(t: number): THREE.Color {
 type ColormapFn = (t: number) => THREE.Color;
 
 // Parse binary mesh
-function parse_binary_mesh(buffer: ArrayBuffer): THREE.BufferGeometry | null {
+function parse_binary_mesh(buffer: ArrayBuffer): { geometry: THREE.BufferGeometry, edges: number } | null {
   const view = new DataView(buffer);
 
   if (buffer.byteLength < 8) return null;
@@ -303,9 +303,13 @@ function parse_binary_mesh(buffer: ArrayBuffer): THREE.BufferGeometry | null {
   geometry.setAttribute('color', new THREE.BufferAttribute(colors.slice(), 3));
   geometry.setIndex(new THREE.BufferAttribute(indices.slice(), 1));
 
-  console.log(`Mesh: ${numVertices} vertices, ${numIndices / 3} triangles`);
+  // Triangles have 3 edges each (though shared edges counted once would be ~1.5x triangles)
+  const numTriangles = numIndices / 3;
+  const numEdges = numTriangles * 3; // Total edge count (including shared)
 
-  return geometry;
+  console.log(`Mesh: ${numVertices} vertices, ${numTriangles} triangles, ${numEdges} edges`);
+
+  return { geometry, edges: numEdges };
 }
 
 // Plane type constants matching server
@@ -975,6 +979,10 @@ function update_mesh(buffer: ArrayBuffer) {
     const fieldData = parse_field_data(buffer);
     console.log(`Field data: ${fieldData.slice.width}x${fieldData.slice.height} slice, ${fieldData.arrows.positions.length / 3} arrows`);
 
+    // Track field grid "edges" (grid cells * 4 edges each)
+    const gridCells = (fieldData.slice.width - 1) * (fieldData.slice.height - 1);
+    last_edge_count = gridCells * 4 + (fieldData.arrows.positions.length / 3) * 8; // arrows have ~8 edges each
+
     // Remove old visualizations
     if (arrows_group) {
       scene.remove(arrows_group);
@@ -1038,12 +1046,49 @@ function update_mesh(buffer: ArrayBuffer) {
   // Hide graph window
   graph_window.classList.remove('visible');
 
-  const geometry = parse_binary_mesh(buffer);
-  if (!geometry) return;
+  const result = parse_binary_mesh(buffer);
+  if (!result) return;
+
+  last_edge_count = result.edges;
 
   const material = create_xray_material(flat_shading);
-  current_mesh = new THREE.Mesh(geometry, material);
+  current_mesh = new THREE.Mesh(result.geometry, material);
   scene.add(current_mesh);
+}
+
+// Status HUD (no GPU needed)
+const status_el = document.getElementById('status')!;
+const status_detail_el = document.getElementById('status-detail')!;
+let last_update_time: Date | null = null;
+let last_edge_count = 0;
+let last_render_ms = 0;
+
+function format_time(date: Date): string {
+  return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function update_status_display() {
+  if (last_update_time) {
+    status_el.textContent = `Updated ${format_time(last_update_time)}`;
+    status_detail_el.textContent = `${last_edge_count.toLocaleString()} edges · ${last_render_ms.toFixed(1)}ms`;
+  }
+}
+
+function update_status(state: 'connecting' | 'connected' | 'disconnected' | 'error', detail?: string) {
+  const icons: Record<string, string> = {
+    connecting: '⏳',
+    connected: '🟢',
+    disconnected: '🔴',
+    error: '❌',
+  };
+  if (state !== 'connected' || !last_update_time) {
+    status_el.textContent = `${icons[state]} ${state.toUpperCase()}`;
+    if (detail) {
+      status_detail_el.textContent = detail;
+    }
+  } else {
+    update_status_display();
+  }
 }
 
 // WebSocket
@@ -1051,20 +1096,31 @@ function connect_websocket() {
   const ws = new WebSocket(`ws://${window.location.hostname}:3001/ws`);
   ws.binaryType = 'arraybuffer';
 
-  ws.onopen = () => console.log('WebSocket connected');
+  ws.onopen = () => {
+    console.log('WebSocket connected');
+    update_status('connected', 'Waiting for data...');
+  };
 
   ws.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
+      const start = performance.now();
       update_mesh(event.data);
+      last_render_ms = performance.now() - start;
+      last_update_time = new Date();
+      update_status_display();
     }
   };
 
   ws.onclose = () => {
     console.log('Disconnected, reconnecting...');
+    update_status('disconnected', 'Reconnecting in 2s...');
     setTimeout(connect_websocket, 2000);
   };
 
-  ws.onerror = (err) => console.error('WebSocket error:', err);
+  ws.onerror = (err) => {
+    console.error('WebSocket error:', err);
+    update_status('error', 'WebSocket error');
+  };
 }
 
 // Resize
