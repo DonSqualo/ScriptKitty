@@ -58,6 +58,18 @@ CouplingCoil = {
 }
 CouplingCoil.z_position = Resonator.height / 2 + CouplingCoil.distance
 
+-- Adapter for physical coupling coil (26mm ID)
+CouplingCoilAdapter = {
+  inner_diameter = 26.0,      -- matches physical coil ID
+  wall = 2.0,                 -- adapter wall thickness
+  height = 15.0,              -- adapter height
+  lip_height = 3.0,           -- lip to hold coil in place
+  lip_thickness = 1.5,        -- lip overhang
+}
+CouplingCoilAdapter.inner_radius = CouplingCoilAdapter.inner_diameter / 2
+CouplingCoilAdapter.outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.wall
+CouplingCoilAdapter.lip_outer_radius = CouplingCoilAdapter.inner_radius + CouplingCoilAdapter.lip_thickness
+
 Scaffold = {
   clearance = 1.0,
   bridge_clearance = 2.0,
@@ -164,6 +176,28 @@ CouplingCoil.body = ring(CouplingCoil.inner_radius, CouplingCoil.outer_radius, C
     :material(copper)
 
 -- ===========================
+-- Geometry: Coupling Coil Adapter
+-- ===========================
+-- Cylindrical adapter that fits inside 26mm ID coupling coil
+-- and slides onto a cylinder inserted into the BLGR
+
+local adapter_main_body = difference(
+  cylinder(CouplingCoilAdapter.outer_radius, CouplingCoilAdapter.height),
+  cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.height + 1)
+):centered()
+
+-- Lip at bottom to hold the coupling coil
+local adapter_lip = difference(
+  cylinder(CouplingCoilAdapter.lip_outer_radius, CouplingCoilAdapter.lip_height),
+  cylinder(CouplingCoilAdapter.inner_radius, CouplingCoilAdapter.lip_height + 1)
+):centered():at(0, 0, -(CouplingCoilAdapter.height / 2) + CouplingCoilAdapter.lip_height / 2)
+
+CouplingCoilAdapter.body = union(adapter_main_body, adapter_lip)
+    :at(0, 0, CouplingCoil.z_position)
+    :color(0.2, 0.2, 0.2, 1.0)
+    :material(dark_pla)
+
+-- ===========================
 -- Geometry: Scaffold
 -- ===========================
 
@@ -233,6 +267,7 @@ local assembly = group("helmholtz_coil", {
   Bridge.dielectric,
   Scaffold.body,
   CouplingCoil.body,
+  CouplingCoilAdapter.body,
 })
 
 Mittens.register(assembly)
@@ -368,6 +403,7 @@ print(string.format("Actual B-field estimate (d=%.1fmm): %.3f mT", Coil.center_d
 print(string.format("Deviation from ideal: %.1f%%", (B_total / B_ideal - 1) * 100))
 
 export_stl("helmholtz_scaffold.stl", Scaffold.body, 128)
+export_stl("coupling_coil_adapter.stl", CouplingCoilAdapter.body, 128)
 
 -- ===========================
 -- NanoVNA Frequency Sweep
