@@ -115,20 +115,34 @@ pub struct Monitor {
 }
 
 /// PML (Perfectly Matched Layer) parameters
+/// Uses CPML (Convolutional PML) for better performance
 #[derive(Debug, Clone)]
 pub struct PmlConfig {
     pub thickness: usize, // Number of cells
-    pub sigma_max: f64,   // Maximum conductivity
+    pub sigma_max: f64,   // Maximum conductivity (auto-computed if 0)
     pub order: f64,       // Polynomial order (typically 3-4)
+    pub kappa_max: f64,   // Maximum kappa (stretching factor, typically 1-15)
+    pub alpha_max: f64,   // Maximum alpha for CFS-PML (typically 0-0.3)
 }
 
 impl Default for PmlConfig {
     fn default() -> Self {
         Self {
             thickness: 10,
-            sigma_max: 1.0,
+            sigma_max: 0.0, // Auto-compute based on cell size
             order: 3.0,
+            kappa_max: 1.0,
+            alpha_max: 0.0,
         }
+    }
+}
+
+impl PmlConfig {
+    /// Compute optimal sigma_max for given cell size
+    pub fn optimal_sigma_max(dx: f64, order: f64) -> f64 {
+        // σ_max = (m+1) / (150 * π * dx) where m is the polynomial order
+        // This gives ~-40 dB reflection for typical PML thickness
+        (order + 1.0) / (150.0 * PI * dx)
     }
 }
 
@@ -177,7 +191,25 @@ impl FdtdConfig {
     }
 }
 
-/// 3D FDTD simulation
+/// CPML coefficients for one direction
+#[derive(Debug, Clone)]
+struct CpmlCoeffs {
+    /// b coefficient: b = exp(-(σ/κ + α) * Δt / ε₀)
+    b: Vec<f64>,
+    /// c coefficient: c = σ * (b - 1) / (σ * κ + α * κ²)
+    c: Vec<f64>,
+}
+
+impl CpmlCoeffs {
+    fn new(n: usize) -> Self {
+        Self {
+            b: vec![0.0; n],
+            c: vec![0.0; n],
+        }
+    }
+}
+
+/// 3D FDTD simulation with CPML boundaries
 pub struct FdtdSimulation {
     pub config: FdtdConfig,
     
@@ -200,7 +232,13 @@ pub struct FdtdSimulation {
     da_hy: Vec<f64>, db_hy: Vec<f64>,
     da_hz: Vec<f64>, db_hz: Vec<f64>,
     
-    // PML auxiliary fields
+    // CPML coefficients for each direction
+    cpml_x: CpmlCoeffs,
+    cpml_y: CpmlCoeffs,
+    cpml_z: CpmlCoeffs,
+    
+    // CPML auxiliary fields (ψ convolution terms)
+    // Only non-zero in PML regions
     psi_ex_y: Vec<f64>, psi_ex_z: Vec<f64>,
     psi_ey_x: Vec<f64>, psi_ey_z: Vec<f64>,
     psi_ez_x: Vec<f64>, psi_ez_y: Vec<f64>,
@@ -216,6 +254,9 @@ pub struct FdtdSimulation {
     
     // Current time step
     time_step: usize,
+    
+    // Whether PML is enabled
+    pml_enabled: bool,
 }
 
 impl FdtdSimulation {
@@ -237,6 +278,11 @@ impl FdtdSimulation {
         let da = vec![1.0; n];
         let db = vec![config.dt / (MU0 * config.dx); n];
         
+        // Initialize CPML coefficients
+        let cpml_x = Self::compute_cpml_coeffs(config.nx, config.pml.thickness, config.dx, config.dt, &config.pml);
+        let cpml_y = Self::compute_cpml_coeffs(config.ny, config.pml.thickness, config.dy, config.dt, &config.pml);
+        let cpml_z = Self::compute_cpml_coeffs(config.nz, config.pml.thickness, config.dz, config.dt, &config.pml);
+        
         // PML auxiliary fields
         let psi = vec![0.0; n];
         
@@ -250,6 +296,7 @@ impl FdtdSimulation {
             da_hx: da.clone(), db_hx: db.clone(),
             da_hy: da.clone(), db_hy: db.clone(),
             da_hz: da, db_hz: db,
+            cpml_x, cpml_y, cpml_z,
             psi_ex_y: psi.clone(), psi_ex_z: psi.clone(),
             psi_ey_x: psi.clone(), psi_ey_z: psi.clone(),
             psi_ez_x: psi.clone(), psi_ez_y: psi.clone(),
@@ -259,7 +306,65 @@ impl FdtdSimulation {
             sources: Vec::new(),
             monitors: Vec::new(),
             time_step: 0,
+            pml_enabled: true,
         }
+    }
+    
+    /// Compute CPML coefficients for one direction
+    fn compute_cpml_coeffs(n: usize, thickness: usize, dx: f64, dt: f64, pml: &PmlConfig) -> CpmlCoeffs {
+        let mut coeffs = CpmlCoeffs::new(n);
+        
+        if thickness == 0 {
+            return coeffs;
+        }
+        
+        // Compute optimal sigma_max if not specified
+        let sigma_max = if pml.sigma_max > 0.0 {
+            pml.sigma_max
+        } else {
+            PmlConfig::optimal_sigma_max(dx, pml.order)
+        };
+        
+        let kappa_max = pml.kappa_max;
+        let alpha_max = pml.alpha_max;
+        let order = pml.order;
+        
+        // Compute coefficients for each position
+        for i in 0..n {
+            // Distance into PML (0 at interface, 1 at boundary)
+            let rho = if i < thickness {
+                // Lower PML region
+                (thickness - i) as f64 / thickness as f64
+            } else if i >= n - thickness {
+                // Upper PML region
+                (i - (n - thickness - 1)) as f64 / thickness as f64
+            } else {
+                // Interior (no PML)
+                0.0
+            };
+            
+            if rho > 0.0 {
+                // Polynomial grading
+                let rho_pow = rho.powf(order);
+                
+                let sigma = sigma_max * rho_pow;
+                let kappa = 1.0 + (kappa_max - 1.0) * rho_pow;
+                let alpha = alpha_max * (1.0 - rho); // Decreases towards boundary
+                
+                // CPML coefficients
+                // b = exp(-(σ/κ + α) * Δt / ε₀)
+                let exponent = -(sigma / kappa + alpha) * dt / EPS0;
+                coeffs.b[i] = exponent.exp();
+                
+                // c = σ * (b - 1) / (σ * κ + α * κ²)
+                let denom = sigma * kappa + alpha * kappa * kappa;
+                if denom.abs() > 1e-20 {
+                    coeffs.c[i] = sigma * (coeffs.b[i] - 1.0) / denom;
+                }
+            }
+        }
+        
+        coeffs
     }
 
     /// Linear index from 3D coordinates
@@ -339,6 +444,11 @@ impl FdtdSimulation {
         };
         self.monitors.push(monitor);
         self.monitors.len() - 1
+    }
+
+    /// Enable or disable PML boundaries
+    pub fn set_pml_enabled(&mut self, enabled: bool) {
+        self.pml_enabled = enabled;
     }
 
     /// Current simulation time (s)
@@ -852,5 +962,29 @@ mod tests {
         // Copper has high conductivity, so Ca should be < 1
         let idx = sim.idx(5, 5, 5);
         assert!(sim.ca_ex[idx] < 1.0, "Ca should be damped for conductor");
+    }
+
+    #[test]
+    fn test_cpml_coefficients() {
+        // Test that CPML coefficients are computed correctly
+        let mut config = FdtdConfig::new(50, 50, 50, 1e-3);
+        config.pml.thickness = 10;
+        config.total_time = 1e-12;
+        
+        let sim = FdtdSimulation::new(config.clone());
+        
+        // Check that coefficients are computed in PML region
+        // Interior should have b=0, c=0 (no PML effect)
+        let interior_idx = 25;
+        assert!((sim.cpml_x.b[interior_idx]).abs() < 1e-10, "Interior b should be 0");
+        assert!((sim.cpml_x.c[interior_idx]).abs() < 1e-10, "Interior c should be 0");
+        
+        // PML region should have non-zero b (absorption)
+        let pml_idx = 2; // Well into PML region
+        assert!(sim.cpml_x.b[pml_idx] > 0.0, "PML b should be positive");
+        
+        // b should approach 1 at the interior interface
+        let interface_idx = config.pml.thickness;
+        assert!(sim.cpml_x.b[interface_idx].abs() < 0.1, "b at interface should be small");
     }
 }

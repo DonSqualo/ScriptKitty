@@ -1,30 +1,42 @@
 # Implementation Plan
 
-Mittens v0.0.14 - Prioritized implementation backlog (2026-01-28).
+Mittens v0.0.15 - Prioritized implementation backlog (2026-01-28).
 
 # Critical Priority
 
-### MEEP Integration (Server-Side)
+### FDTD Electromagnetic Simulation (Server-Side)
 
 **Goal:** Compute resonant frequency of bridged loop-gap resonator via full-wave FDTD simulation, entirely in Rust.
 
 **Spec:** `specs/meep/SPEC.md`
 
 **Key requirements:**
-- No Python — all MEEP via Rust FFI bindings
-- Pipeline: Lua → Manifold3D mesh → MEEP simulation → WebSocket results
+- No Python — pure Rust FDTD implementation (no MEEP dependency)
+- Pipeline: Lua → Manifold3D mesh → voxelization → FDTD simulation → WebSocket results
 - Outputs: S11 (replaces Wheeler approximation), 2D B-field plane, oscilloscope widget
 
 **Phases:**
-1. [ ] MEEP FFI binding (`crates/meep-sys/`)
-2. [ ] Geometry integration (mesh → MEEP)
-3. [ ] Resonance detection (harminv)
-4. [ ] Field visualization (colormap + oscilloscope)
-5. [ ] Screenshot test validation
+1. [x] Core FDTD solver (`server/src/fdtd.rs`) - 4 tests
+   - 3D Yee grid with staggered E/H fields
+   - Leapfrog time-stepping with CFL-stable dt
+   - Material properties (permittivity, permeability, conductivity)
+   - Gaussian pulse and CW sources
+   - Field monitors with time-series recording
+   - Resonance detection via FFT
+   - S11 computation from incident/reflected waves
+2. [x] Voxelization (`server/src/voxel.rs`) - 1 test
+   - Ray-casting point-in-mesh test
+   - Mesh to voxel grid conversion
+3. [ ] PML absorbing boundaries (required for open-domain simulations)
+4. [ ] Geometry integration (voxel grid → FDTD material assignment)
+5. [ ] Lua API: `FdtdStudy({ geometry = {...}, freq_center = 450e6, ... })`
+6. [ ] WebSocket protocol for FDTD results (FDTD\0 header)
+7. [ ] Renderer: oscilloscope widget for time-domain field display
+8. [ ] Integration test with loop-gap resonator
 
-**Success criteria:** Screenshot shows full Helmholtz system + NanoVNA with MEEP-computed S11 + 2D B-field + oscilloscope at 16 ± 0.5 mT.
+**Success criteria:** Screenshot shows full Helmholtz system + NanoVNA with FDTD-computed S11 + 2D B-field + oscilloscope at 16 ± 0.5 mT.
 
-**Obsoletes:** `examples/meep/` (Python scripts) — delete after Rust implementation complete.
+**Note:** Original spec called for MEEP FFI bindings, but MEEP is a complex C++ library with no Rust bindings available. Pure Rust FDTD achieves the same goal with zero external dependencies and full integration.
 
 ---
 
@@ -51,6 +63,23 @@ Model biological tissue effects (ε_r ≈ 80) on resonator Q.
 ---
 
 # Recently Fixed (2026-01-28)
+
+### Pure Rust FDTD Solver
+Added complete FDTD electromagnetic solver in pure Rust.
+- File: `server/src/fdtd.rs`
+- 3D Yee algorithm with leapfrog time-stepping
+- CFL-stable automatic time step calculation
+- Material properties: eps_r, mu_r, sigma_e, sigma_m
+- Sources: Gaussian pulse (broadband), continuous wave
+- Monitors: field probes with time-series recording
+- Resonance detection via FFT peak finding
+- S11 computation from frequency-domain division
+- 2D field slice extraction for visualization
+- 4 tests passing
+
+### Voxel Point-in-Mesh Fix
+Fixed edge case in ray-casting point-in-mesh test where points on triangle edges were double-counted.
+- File: `server/src/voxel.rs`
 
 ### Whisper Audio Transcription
 Added chunked whisper transcription for voice notes.
@@ -103,6 +132,7 @@ Added realistic RF behavior to coil impedance model.
 - Acoustic pressure field (Rayleigh-Sommerfeld, 7 tests)
 - Standing wave reflection modeling (mirror source)
 - NanoVNA S11 frequency sweep (12 tests) - Wheeler + skin effect + parasitic capacitance + mutual inductance
+- FDTD electromagnetic solver (4 tests)
 
 ### Instruments
 - GaussMeter backend computation for point B-field measurement
