@@ -1,0 +1,10 @@
+{
+  "deadline_utc": "08:00",
+  "phase_timeout_seconds": 1800,
+  "screenshot_required": true,
+  "workspace": "/home/heim/clawd/Mittens",
+  "notify_user": "760755935",
+  "reference_screenshots": {
+    "fdtd_complete": "screenshots/acoustics.png"
+  }
+}

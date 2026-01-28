@@ -50,7 +50,7 @@ sleep 1
 export LD_LIBRARY_PATH=$(find /root/Mittens -name "libmanifoldc.so" -path "*/out/lib/*" 2>/dev/null | head -1 | xargs dirname)
 cd /root/Mittens && git pull
 
-./server/target/release/scriptcad-server examples/multiphysics/pure_acoustics.lua > /tmp/server.log 2>&1 &
+./server/target/release/scriptcad-server examples/helmholtz_fdtd_demo.lua > /tmp/server.log 2>&1 &
 cd renderer && npm run dev > /tmp/renderer.log 2>&1 &
 sleep 4
 echo "✓ Services restarted"

@@ -52,6 +52,13 @@ Mittens v0.0.15 - Prioritized implementation backlog (2026-01-28).
 
 **Success criteria:** Screenshot shows full Helmholtz system + NanoVNA with FDTD-computed S11 + 2D B-field + oscilloscope at 16 ± 0.5 mT.
 
+**Status (2025-01-28):** All 70 tests pass. Backend code complete. SUCCESS CRITERIA NOT YET MET visually — need a complete demo script that integrates Helmholtz coils + FdtdStudy + NanoVNA + MagneticFieldPlane into one example. Current vast-screenshot.sh uses pure_acoustics.lua (acoustic simulation, not FDTD/magnetic).
+
+**TODO:**
+- [ ] Create `examples/helmholtz_fdtd_demo.lua` that combines all features
+- [ ] Update vast-screenshot.sh default script OR add --script flag
+- [ ] Take verification screenshot showing oscilloscope + field planes + NanoVNA
+
 **Note:** Original spec called for MEEP FFI bindings, but MEEP is a complex C++ library with no Rust bindings available. Pure Rust FDTD achieves the same goal with zero external dependencies and full integration.
 
 ---

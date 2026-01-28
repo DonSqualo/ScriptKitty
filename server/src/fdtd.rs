@@ -746,13 +746,18 @@ impl FdtdSimulation {
     /// 
     /// Creates an FDTD simulation that matches the voxel grid dimensions,
     /// adding PML padding around the edges.
+    /// 
+    /// Note: voxel_size is expected in mm (as used by the geometry system).
+    /// The FDTD physics uses SI units (meters), so we convert internally.
     pub fn from_voxel_grid(grid: &crate::voxel::VoxelGrid, pml_thickness: usize) -> Self {
         // FDTD grid size = voxel grid + 2*PML on each side
         let nx = grid.nx + 2 * pml_thickness;
         let ny = grid.ny + 2 * pml_thickness;
         let nz = grid.nz + 2 * pml_thickness;
         
-        let mut config = FdtdConfig::new(nx, ny, nz, grid.voxel_size);
+        // Convert voxel_size from mm to meters for physics calculations
+        let cell_size_m = grid.voxel_size * 1e-3;
+        let mut config = FdtdConfig::new(nx, ny, nz, cell_size_m);
         config.pml.thickness = pml_thickness;
         
         let mut sim = Self::new(config);

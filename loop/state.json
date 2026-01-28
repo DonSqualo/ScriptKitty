@@ -1,0 +1,11 @@
+{
+  "current_phase": "EXECUTOR",
+  "iteration": 1,
+  "started_at": "2026-01-28T15:35:00Z",
+  "deadline_utc": "08:00",
+  "last_screenshot": null,
+  "last_planner_run": "2026-01-28T15:45:00Z",
+  "tasks_completed_this_run": [],
+  "executor_attempts": 1,
+  "active_session": "agent:main:subagent:f303b791-1ae1-4311-83a8-5e3181510339"
+}

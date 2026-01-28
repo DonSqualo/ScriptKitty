@@ -1080,9 +1080,10 @@ fn try_run_fdtd_study(lua: &mlua::Lua, content: &str, mesh: &geometry::MeshData)
     );
 
     // Convert mesh to voxel grid
+    // Note: mesh positions are in mm, so cell_size (also in mm) is used directly
     let material = voxel::VoxelMaterial::pec();
     let meshes: Vec<(geometry::MeshData, voxel::VoxelMaterial)> = vec![(mesh.clone(), material)];
-    let grid = voxel::voxelize_scene(&meshes, cell_size * 1e-3, cell_size * 2e-3);
+    let grid = voxel::voxelize_scene(&meshes, cell_size, cell_size * 2.0);
 
     info!(
         "Voxelized to {}x{}x{} grid ({} voxels)",
