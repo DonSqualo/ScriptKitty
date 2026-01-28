@@ -63,16 +63,19 @@ fi
 
 echo "Starting Ralph - Max iterations: $MAX_ITERATIONS"
 
+ITER_LOG="$SCRIPT_DIR/ralph-iter.log"
+
 for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
   echo "==============================================================="
-  echo "  Ralph Iteration $i of $MAX_ITERATIONS"
+  echo "  Ralph Iteration $i of $MAX_ITERATIONS - $(date)"
   echo "==============================================================="
 
-  OUTPUT=$(claude --dangerously-skip-permissions --print < "$SCRIPT_DIR/PROMPT.md" 2>&1 | tee /dev/stderr) || true
+  # Stream output directly to console AND capture to file
+  claude --dangerously-skip-permissions --print < "$SCRIPT_DIR/PROMPT.md" 2>&1 | tee "$ITER_LOG" || true
 
   # Check for completion signal
-  if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+  if grep -q "<promise>COMPLETE</promise>" "$ITER_LOG" 2>/dev/null; then
     echo ""
     echo "Ralph completed all tasks!"
     echo "Completed at iteration $i of $MAX_ITERATIONS"
