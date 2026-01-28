@@ -41,8 +41,14 @@ Mittens v0.0.15 - Prioritized implementation backlog (2026-01-28).
 6. [x] WebSocket protocol for FDTD results (FDTD\0 header) - 1 test
    - FdtdStudyResult::to_binary() serialization
    - Handled in main.rs result receiver
-7. [ ] Renderer: oscilloscope widget for time-domain field display
-8. [ ] Integration test with loop-gap resonator geometry
+7. [x] Renderer: oscilloscope widget for time-domain field display
+   - oscilloscope-window HTML with canvas
+   - parse_fdtd_data() / draw_oscilloscope() in TypeScript
+   - Shows grid, steps, wall time, resonance frequency
+8. [x] Integration test with loop-gap resonator geometry - 1 test
+   - test_fdtd_study_full_integration: ring resonator → voxelize → FDTD
+   - Example script: examples/fdtd_resonator.lua
+   - 10 FDTD tests, 70 total tests passing
 
 **Success criteria:** Screenshot shows full Helmholtz system + NanoVNA with FDTD-computed S11 + 2D B-field + oscilloscope at 16 ± 0.5 mT.
 

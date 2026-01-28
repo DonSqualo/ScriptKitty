@@ -1531,6 +1531,99 @@ mod tests {
     }
 
     #[test]
+    fn test_fdtd_study_full_integration() {
+        use crate::voxel::{VoxelGrid, VoxelMaterial};
+        
+        // Create a simple resonator-like geometry in voxels
+        // A conductive shell (like a loop-gap resonator)
+        let voxel_size = 2e-3; // 2mm voxels
+        let origin = [-30e-3, -30e-3, -15e-3];
+        let size = [60e-3, 60e-3, 30e-3];
+        
+        let mut grid = VoxelGrid::new(origin, size, voxel_size);
+        
+        // Add copper material
+        let copper = VoxelMaterial {
+            id: 1,
+            name: "copper".to_string(),
+            permittivity: 1.0,
+            permeability: 1.0,
+            conductivity: 5.8e7,
+            is_pec: false,
+        };
+        let copper_id = grid.add_material(copper);
+        
+        // Create a ring of copper in the XY plane at z=center
+        let center_x = grid.nx / 2;
+        let center_y = grid.ny / 2;
+        let center_z = grid.nz / 2;
+        let r_outer = 8;  // 8 voxels = 16mm
+        let r_inner = 6;  // 6 voxels = 12mm
+        
+        for z in (center_z - 2)..(center_z + 2) {
+            for y in 0..grid.ny {
+                for x in 0..grid.nx {
+                    let dx = (x as isize - center_x as isize).abs() as usize;
+                    let dy = (y as isize - center_y as isize).abs() as usize;
+                    let r_sq = dx * dx + dy * dy;
+                    
+                    if r_sq <= r_outer * r_outer && r_sq >= r_inner * r_inner {
+                        // Leave a gap in +X direction
+                        if x <= center_x || dy > 2 {
+                            grid.set(x, y, z, copper_id);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Configure FDTD study
+        // Note: source_offset is in mm, and the ring inner radius is 12mm (6 voxels * 2mm)
+        // Place source inside the ring (at center, which is in air) but not in the ring wall
+        let config = FdtdStudyConfig {
+            freq_center: 500e6,   // 500 MHz
+            freq_width: 300e6,    // 300 MHz bandwidth
+            cell_size: 2.0,       // 2mm cells
+            pml_thickness: 5,
+            max_time_ns: 30.0,    // Longer simulation to see pulse
+            source_offset: [0.0, 0.0, 0.0],  // Center (inside ring, air region)
+            monitor_offset: [4.0, 0.0, 0.0], // 4mm from center (still inside ring)
+            field_plane: FieldPlane::XZ(0),
+        };
+        
+        // Run the study
+        let result = run_fdtd_study(&grid, &config);
+        
+        // Verify results
+        assert!(result.time_samples.len() > 0, "Should have time samples");
+        assert_eq!(result.time_samples.len(), result.field_samples.len(), "Time and field arrays should match");
+        assert!(result.stats.num_steps > 0, "Should have run some steps");
+        assert!(result.stats.wall_time_ms > 0, "Should have taken some time");
+        
+        // Grid should include PML padding
+        let expected_size = grid.nx + 2 * config.pml_thickness;
+        assert_eq!(result.stats.grid_size[0], expected_size, "Grid X should include PML");
+        
+        // Field slice should have data
+        assert_eq!(result.slice_dims.0 * result.slice_dims.1, result.field_slice.len(), 
+            "Field slice size should match dims");
+        
+        // Some field values should be non-zero (source excited)
+        let max_field = result.field_samples.iter().cloned().map(|x| x.abs()).fold(0.0f64, f64::max);
+        assert!(max_field > 1e-10, "Should have non-zero field values from source");
+        
+        println!("FDTD integration test:");
+        println!("  Grid: {}x{}x{}", result.stats.grid_size[0], result.stats.grid_size[1], result.stats.grid_size[2]);
+        println!("  Steps: {}", result.stats.num_steps);
+        println!("  Wall time: {} ms", result.stats.wall_time_ms);
+        println!("  Max field: {:.2e}", max_field);
+        println!("  Resonances: {}", result.resonances.len());
+        for (i, res) in result.resonances.iter().take(3).enumerate() {
+            println!("    {}: {:.1} MHz (Q={:.0})", i, res.frequency / 1e6, res.q_factor);
+        }
+    }
+
+    #[test]
     fn test_pml_absorption() {
         // Test that PML absorbs waves (energy decays with PML, reflects without)
         let cell_size = 1e-2; // 1cm cells
