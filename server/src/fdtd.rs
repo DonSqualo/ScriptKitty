@@ -451,6 +451,115 @@ impl FdtdSimulation {
         self.pml_enabled = enabled;
     }
 
+    /// Load materials from a voxel grid
+    /// 
+    /// Maps the voxel grid's material IDs to FDTD material properties.
+    /// The voxel grid origin and size should match the FDTD simulation domain.
+    pub fn load_from_voxel_grid(&mut self, grid: &crate::voxel::VoxelGrid) {
+        // Convert VoxelMaterial to FDTD Material
+        let materials: Vec<Material> = grid.materials.iter().map(|vm| {
+            if vm.is_pec || vm.conductivity > 1e6 {
+                Material::pec()
+            } else {
+                Material {
+                    eps_r: vm.permittivity,
+                    mu_r: vm.permeability,
+                    sigma_e: if vm.conductivity.is_finite() { vm.conductivity } else { 0.0 },
+                    sigma_m: 0.0,
+                }
+            }
+        }).collect();
+
+        // Map voxel grid to FDTD grid
+        // Account for possible size differences and PML regions
+        let pml_offset = self.config.pml.thickness;
+        
+        for k in 0..self.config.nz {
+            for j in 0..self.config.ny {
+                for i in 0..self.config.nx {
+                    // Compute position in physical space
+                    let x = self.config.dx * (i as f64 + 0.5);
+                    let y = self.config.dy * (j as f64 + 0.5);
+                    let z = self.config.dz * (k as f64 + 0.5);
+                    
+                    // Map to voxel grid coordinates
+                    let vx = ((x - grid.origin[0]) / grid.voxel_size).floor() as isize;
+                    let vy = ((y - grid.origin[1]) / grid.voxel_size).floor() as isize;
+                    let vz = ((z - grid.origin[2]) / grid.voxel_size).floor() as isize;
+                    
+                    // Check bounds and get material
+                    if vx >= 0 && vx < grid.nx as isize 
+                        && vy >= 0 && vy < grid.ny as isize 
+                        && vz >= 0 && vz < grid.nz as isize 
+                    {
+                        let mat_id = grid.data[grid.index(vx as usize, vy as usize, vz as usize)] as usize;
+                        if mat_id < materials.len() && mat_id > 0 {
+                            // Only set non-air materials (air is default)
+                            self.set_material(i, j, k, materials[mat_id]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Create FDTD simulation from voxel grid with automatic sizing
+    /// 
+    /// Creates an FDTD simulation that matches the voxel grid dimensions,
+    /// adding PML padding around the edges.
+    pub fn from_voxel_grid(grid: &crate::voxel::VoxelGrid, pml_thickness: usize) -> Self {
+        // FDTD grid size = voxel grid + 2*PML on each side
+        let nx = grid.nx + 2 * pml_thickness;
+        let ny = grid.ny + 2 * pml_thickness;
+        let nz = grid.nz + 2 * pml_thickness;
+        
+        let mut config = FdtdConfig::new(nx, ny, nz, grid.voxel_size);
+        config.pml.thickness = pml_thickness;
+        
+        let mut sim = Self::new(config);
+        
+        // Load materials with offset for PML
+        sim.load_from_voxel_grid_with_offset(grid, pml_thickness);
+        
+        sim
+    }
+
+    /// Load materials from voxel grid with an offset (for PML padding)
+    fn load_from_voxel_grid_with_offset(&mut self, grid: &crate::voxel::VoxelGrid, offset: usize) {
+        // Convert VoxelMaterial to FDTD Material
+        let materials: Vec<Material> = grid.materials.iter().map(|vm| {
+            if vm.is_pec || vm.conductivity > 1e6 {
+                Material::pec()
+            } else {
+                Material {
+                    eps_r: vm.permittivity,
+                    mu_r: vm.permeability,
+                    sigma_e: if vm.conductivity.is_finite() { vm.conductivity } else { 0.0 },
+                    sigma_m: 0.0,
+                }
+            }
+        }).collect();
+
+        // Copy voxel materials to FDTD grid with offset
+        for vz in 0..grid.nz {
+            for vy in 0..grid.ny {
+                for vx in 0..grid.nx {
+                    let mat_id = grid.data[grid.index(vx, vy, vz)] as usize;
+                    if mat_id < materials.len() && mat_id > 0 {
+                        // Map voxel position to FDTD position (with offset)
+                        let i = vx + offset;
+                        let j = vy + offset;
+                        let k = vz + offset;
+                        
+                        if i < self.config.nx && j < self.config.ny && k < self.config.nz {
+                            self.set_material(i, j, k, materials[mat_id]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Current simulation time (s)
     pub fn current_time(&self) -> f64 {
         self.time_step as f64 * self.config.dt
@@ -1099,6 +1208,56 @@ mod tests {
         // b should approach 1 at the interior interface
         let interface_idx = config.pml.thickness;
         assert!(sim.cpml_x.b[interface_idx].abs() < 0.1, "b at interface should be small");
+    }
+
+    #[test]
+    fn test_voxel_to_fdtd_integration() {
+        use crate::voxel::{VoxelGrid, VoxelMaterial};
+        
+        // Create a simple voxel grid with a conductive block in the center
+        let voxel_size = 1e-3; // 1mm
+        let origin = [0.0, 0.0, 0.0];
+        let size = [10e-3, 10e-3, 10e-3]; // 10mm cube = 10x10x10 voxels
+        
+        let mut grid = VoxelGrid::new(origin, size, voxel_size);
+        
+        // Add a copper material
+        let copper = VoxelMaterial {
+            id: 1,
+            name: "copper".to_string(),
+            permittivity: 1.0,
+            permeability: 1.0,
+            conductivity: 5.8e7,
+            is_pec: false,
+        };
+        let copper_id = grid.add_material(copper);
+        
+        // Set a 4x4x4 block in the center as copper
+        for z in 3..7 {
+            for y in 3..7 {
+                for x in 3..7 {
+                    grid.set(x, y, z, copper_id);
+                }
+            }
+        }
+        
+        // Create FDTD simulation from voxel grid
+        let pml_thickness = 5;
+        let sim = FdtdSimulation::from_voxel_grid(&grid, pml_thickness);
+        
+        // Check dimensions (10 voxels + 2*5 PML = 20)
+        assert_eq!(sim.config.nx, 20);
+        assert_eq!(sim.config.ny, 20);
+        assert_eq!(sim.config.nz, 20);
+        
+        // Check that copper block has correct material (damped Ca coefficient)
+        // Block is at voxel (3-7), with offset 5 → FDTD (8-12)
+        let center_idx = sim.idx(10, 10, 10); // Center of copper block
+        assert!(sim.ca_ex[center_idx] < 1.0, "Copper region should have damped Ca");
+        
+        // Check that air region has Ca = 1.0
+        let air_idx = sim.idx(2, 2, 2); // In PML but air material
+        assert!((sim.ca_ex[air_idx] - 1.0).abs() < 1e-10, "Air region should have Ca ≈ 1.0");
     }
 
     #[test]
