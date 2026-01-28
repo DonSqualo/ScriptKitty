@@ -25,6 +25,7 @@ use tracing::{error, info};
 mod acoustic;
 mod circuit;
 mod export;
+mod fdtd;
 mod field;
 mod geometry;
 mod meep;
