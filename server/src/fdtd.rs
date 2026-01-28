@@ -456,11 +456,31 @@ impl FdtdSimulation {
         self.time_step as f64 * self.config.dt
     }
 
-    /// Update E-field (half step)
+    /// Check if position is in PML region for a given direction
+    #[inline]
+    fn in_pml_x(&self, i: usize) -> bool {
+        let pml_thick = self.config.pml.thickness;
+        i < pml_thick || i >= self.config.nx - pml_thick
+    }
+    
+    #[inline]
+    fn in_pml_y(&self, j: usize) -> bool {
+        let pml_thick = self.config.pml.thickness;
+        j < pml_thick || j >= self.config.ny - pml_thick
+    }
+    
+    #[inline]
+    fn in_pml_z(&self, k: usize) -> bool {
+        let pml_thick = self.config.pml.thickness;
+        k < pml_thick || k >= self.config.nz - pml_thick
+    }
+
+    /// Update E-field (half step) with CPML
     fn update_e(&mut self) {
         let nx = self.config.nx;
         let ny = self.config.ny;
         let nz = self.config.nz;
+        let pml_enabled = self.pml_enabled && self.config.pml.thickness > 0;
         
         // Update Ex: dEx/dt = (dHz/dy - dHy/dz) / ε
         for k in 0..nz-1 {
@@ -473,8 +493,25 @@ impl FdtdSimulation {
                     let dhz_dy = self.hz[idx] - self.hz[idx_jm1];
                     let dhy_dz = self.hy[idx] - self.hy[idx_km1];
                     
+                    // Standard update
                     self.ex[idx] = self.ca_ex[idx] * self.ex[idx]
                         + self.cb_ex[idx] * (dhz_dy - dhy_dz);
+                    
+                    // CPML corrections in PML regions
+                    if pml_enabled {
+                        if self.in_pml_y(j) {
+                            // Update psi_ex_y and add contribution
+                            self.psi_ex_y[idx] = self.cpml_y.b[j] * self.psi_ex_y[idx]
+                                + self.cpml_y.c[j] * dhz_dy;
+                            self.ex[idx] += self.cb_ex[idx] * self.psi_ex_y[idx];
+                        }
+                        if self.in_pml_z(k) {
+                            // Update psi_ex_z and add contribution
+                            self.psi_ex_z[idx] = self.cpml_z.b[k] * self.psi_ex_z[idx]
+                                + self.cpml_z.c[k] * dhy_dz;
+                            self.ex[idx] -= self.cb_ex[idx] * self.psi_ex_z[idx];
+                        }
+                    }
                 }
             }
         }
@@ -490,8 +527,23 @@ impl FdtdSimulation {
                     let dhx_dz = self.hx[idx] - self.hx[idx_km1];
                     let dhz_dx = self.hz[idx] - self.hz[idx_im1];
                     
+                    // Standard update
                     self.ey[idx] = self.ca_ey[idx] * self.ey[idx]
                         + self.cb_ey[idx] * (dhx_dz - dhz_dx);
+                    
+                    // CPML corrections
+                    if pml_enabled {
+                        if self.in_pml_z(k) {
+                            self.psi_ey_z[idx] = self.cpml_z.b[k] * self.psi_ey_z[idx]
+                                + self.cpml_z.c[k] * dhx_dz;
+                            self.ey[idx] += self.cb_ey[idx] * self.psi_ey_z[idx];
+                        }
+                        if self.in_pml_x(i) {
+                            self.psi_ey_x[idx] = self.cpml_x.b[i] * self.psi_ey_x[idx]
+                                + self.cpml_x.c[i] * dhz_dx;
+                            self.ey[idx] -= self.cb_ey[idx] * self.psi_ey_x[idx];
+                        }
+                    }
                 }
             }
         }
@@ -507,18 +559,34 @@ impl FdtdSimulation {
                     let dhy_dx = self.hy[idx] - self.hy[idx_im1];
                     let dhx_dy = self.hx[idx] - self.hx[idx_jm1];
                     
+                    // Standard update
                     self.ez[idx] = self.ca_ez[idx] * self.ez[idx]
                         + self.cb_ez[idx] * (dhy_dx - dhx_dy);
+                    
+                    // CPML corrections
+                    if pml_enabled {
+                        if self.in_pml_x(i) {
+                            self.psi_ez_x[idx] = self.cpml_x.b[i] * self.psi_ez_x[idx]
+                                + self.cpml_x.c[i] * dhy_dx;
+                            self.ez[idx] += self.cb_ez[idx] * self.psi_ez_x[idx];
+                        }
+                        if self.in_pml_y(j) {
+                            self.psi_ez_y[idx] = self.cpml_y.b[j] * self.psi_ez_y[idx]
+                                + self.cpml_y.c[j] * dhx_dy;
+                            self.ez[idx] -= self.cb_ez[idx] * self.psi_ez_y[idx];
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Update H-field (half step)
+    /// Update H-field (half step) with CPML
     fn update_h(&mut self) {
         let nx = self.config.nx;
         let ny = self.config.ny;
         let nz = self.config.nz;
+        let pml_enabled = self.pml_enabled && self.config.pml.thickness > 0;
         
         // Update Hx: dHx/dt = -(dEz/dy - dEy/dz) / μ
         for k in 0..nz-1 {
@@ -531,8 +599,23 @@ impl FdtdSimulation {
                     let dez_dy = self.ez[idx_jp1] - self.ez[idx];
                     let dey_dz = self.ey[idx_kp1] - self.ey[idx];
                     
+                    // Standard update
                     self.hx[idx] = self.da_hx[idx] * self.hx[idx]
                         - self.db_hx[idx] * (dez_dy - dey_dz);
+                    
+                    // CPML corrections
+                    if pml_enabled {
+                        if self.in_pml_y(j) {
+                            self.psi_hx_y[idx] = self.cpml_y.b[j] * self.psi_hx_y[idx]
+                                + self.cpml_y.c[j] * dez_dy;
+                            self.hx[idx] -= self.db_hx[idx] * self.psi_hx_y[idx];
+                        }
+                        if self.in_pml_z(k) {
+                            self.psi_hx_z[idx] = self.cpml_z.b[k] * self.psi_hx_z[idx]
+                                + self.cpml_z.c[k] * dey_dz;
+                            self.hx[idx] += self.db_hx[idx] * self.psi_hx_z[idx];
+                        }
+                    }
                 }
             }
         }
@@ -548,8 +631,23 @@ impl FdtdSimulation {
                     let dex_dz = self.ex[idx_kp1] - self.ex[idx];
                     let dez_dx = self.ez[idx_ip1] - self.ez[idx];
                     
+                    // Standard update
                     self.hy[idx] = self.da_hy[idx] * self.hy[idx]
                         - self.db_hy[idx] * (dex_dz - dez_dx);
+                    
+                    // CPML corrections
+                    if pml_enabled {
+                        if self.in_pml_z(k) {
+                            self.psi_hy_z[idx] = self.cpml_z.b[k] * self.psi_hy_z[idx]
+                                + self.cpml_z.c[k] * dex_dz;
+                            self.hy[idx] -= self.db_hy[idx] * self.psi_hy_z[idx];
+                        }
+                        if self.in_pml_x(i) {
+                            self.psi_hy_x[idx] = self.cpml_x.b[i] * self.psi_hy_x[idx]
+                                + self.cpml_x.c[i] * dez_dx;
+                            self.hy[idx] += self.db_hy[idx] * self.psi_hy_x[idx];
+                        }
+                    }
                 }
             }
         }
@@ -565,8 +663,23 @@ impl FdtdSimulation {
                     let dey_dx = self.ey[idx_ip1] - self.ey[idx];
                     let dex_dy = self.ex[idx_jp1] - self.ex[idx];
                     
+                    // Standard update
                     self.hz[idx] = self.da_hz[idx] * self.hz[idx]
                         - self.db_hz[idx] * (dey_dx - dex_dy);
+                    
+                    // CPML corrections
+                    if pml_enabled {
+                        if self.in_pml_x(i) {
+                            self.psi_hz_x[idx] = self.cpml_x.b[i] * self.psi_hz_x[idx]
+                                + self.cpml_x.c[i] * dey_dx;
+                            self.hz[idx] -= self.db_hz[idx] * self.psi_hz_x[idx];
+                        }
+                        if self.in_pml_y(j) {
+                            self.psi_hz_y[idx] = self.cpml_y.b[j] * self.psi_hz_y[idx]
+                                + self.cpml_y.c[j] * dex_dy;
+                            self.hz[idx] += self.db_hz[idx] * self.psi_hz_y[idx];
+                        }
+                    }
                 }
             }
         }
@@ -986,5 +1099,75 @@ mod tests {
         // b should approach 1 at the interior interface
         let interface_idx = config.pml.thickness;
         assert!(sim.cpml_x.b[interface_idx].abs() < 0.1, "b at interface should be small");
+    }
+
+    #[test]
+    fn test_pml_absorption() {
+        // Test that PML absorbs waves (energy decays with PML, reflects without)
+        let cell_size = 1e-2; // 1cm cells
+        let grid_size = 40;
+        let pml_thick = 8;
+        
+        // Calculate total field energy
+        fn field_energy(sim: &FdtdSimulation) -> f64 {
+            let mut energy = 0.0;
+            for k in 0..sim.config.nz {
+                for j in 0..sim.config.ny {
+                    for i in 0..sim.config.nx {
+                        let idx = sim.idx(i, j, k);
+                        energy += sim.ex[idx].powi(2) + sim.ey[idx].powi(2) + sim.ez[idx].powi(2);
+                        energy += sim.hx[idx].powi(2) + sim.hy[idx].powi(2) + sim.hz[idx].powi(2);
+                    }
+                }
+            }
+            energy
+        }
+        
+        // Create simulation WITH PML
+        let mut config_pml = FdtdConfig::new(grid_size, grid_size, grid_size, cell_size);
+        config_pml.pml.thickness = pml_thick;
+        config_pml.total_time = 5e-9; // 5 ns
+        
+        let mut sim_pml = FdtdSimulation::new(config_pml);
+        sim_pml.add_source(Source::GaussianPulse {
+            fcen: 1e9,
+            fwidth: 0.8e9,
+            amplitude: 1.0,
+            position: [grid_size/2, grid_size/2, grid_size/2],
+            component: Component::Ez,
+        });
+        
+        // Create simulation WITHOUT PML (reflecting boundaries)
+        let mut config_no_pml = FdtdConfig::new(grid_size, grid_size, grid_size, cell_size);
+        config_no_pml.pml.thickness = 0;
+        config_no_pml.total_time = 5e-9;
+        
+        let mut sim_no_pml = FdtdSimulation::new(config_no_pml);
+        sim_no_pml.set_pml_enabled(false);
+        sim_no_pml.add_source(Source::GaussianPulse {
+            fcen: 1e9,
+            fwidth: 0.8e9,
+            amplitude: 1.0,
+            position: [grid_size/2, grid_size/2, grid_size/2],
+            component: Component::Ez,
+        });
+        
+        // Run both for a while (let pulse hit boundaries)
+        let steps = 300;
+        for _ in 0..steps {
+            sim_pml.step();
+            sim_no_pml.step();
+        }
+        
+        let energy_pml = field_energy(&sim_pml);
+        let energy_no_pml = field_energy(&sim_no_pml);
+        
+        // PML should have significantly less energy (absorbed at boundaries)
+        // Without PML, energy reflects back
+        assert!(
+            energy_pml < energy_no_pml * 0.5,
+            "PML should absorb energy: with_pml={:.2e}, without_pml={:.2e}",
+            energy_pml, energy_no_pml
+        );
     }
 }
