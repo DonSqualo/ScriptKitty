@@ -1,0 +1,33 @@
+{
+  "timestamp": "2025-01-22T15:46:36Z",
+  "screenshot": "screenshots/validation_1546.png",
+  "elements": {
+    "3d_geometry": {
+      "status": "PASS",
+      "notes": "Cylindrical resonator visible with Helmholtz coils at top/bottom, sitting on simulation grid"
+    },
+    "field_colormap": {
+      "status": "PARTIAL",
+      "notes": "Blue glowing field visible inside cylinder, but no explicit colormap plane with colorbar"
+    },
+    "oscilloscope_widget": {
+      "status": "FAIL",
+      "notes": "NOT VISIBLE - No time-domain trace oscilloscope widget present"
+    },
+    "nanovna_s11_plot": {
+      "status": "FAIL",
+      "notes": "NOT VISIBLE - No S11 frequency response plot present"
+    },
+    "circuit_diagram": {
+      "status": "PASS",
+      "notes": "Circuit diagram visible: sine source → amplifier → inductor → capacitor/detector"
+    },
+    "no_errors": {
+      "status": "PASS",
+      "notes": "No error messages, scene renders correctly with stats visible"
+    }
+  },
+  "overall": "FAIL",
+  "missing": ["oscilloscope_widget", "nanovna_s11_plot", "field_colormap_plane"],
+  "summary": "3D geometry and circuit overlay render correctly. Missing oscilloscope time-domain widget and NanoVNA S11 frequency plot. Field colormap is partial (glow visible but no explicit plane/colorbar)."
+}

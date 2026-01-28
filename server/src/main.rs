@@ -1360,6 +1360,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         let _ = sender.send(Message::Binary(nanovna.into())).await;
     }
 
+    // Send current FDTD if available
+    if let Some(fdtd) = state.current_fdtd.read().await.clone() {
+        let _ = sender.send(Message::Binary(fdtd.into())).await;
+    }
+
     loop {
         tokio::select! {
             Ok(mesh) = rx.recv() => {
