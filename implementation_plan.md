@@ -27,12 +27,22 @@ Mittens v0.0.15 - Prioritized implementation backlog (2026-01-28).
 2. [x] Voxelization (`server/src/voxel.rs`) - 1 test
    - Ray-casting point-in-mesh test
    - Mesh to voxel grid conversion
-3. [ ] PML absorbing boundaries (required for open-domain simulations)
-4. [ ] Geometry integration (voxel grid → FDTD material assignment)
-5. [ ] Lua API: `FdtdStudy({ geometry = {...}, freq_center = 450e6, ... })`
-6. [ ] WebSocket protocol for FDTD results (FDTD\0 header)
+3. [x] CPML absorbing boundaries - 1 test
+   - Integrated CPML psi fields into E/H update equations
+   - test_pml_absorption verifies energy decay vs reflection
+4. [x] Geometry integration (voxel grid → FDTD material assignment) - 1 test
+   - FdtdSimulation::load_from_voxel_grid()
+   - FdtdSimulation::from_voxel_grid() with auto PML sizing
+5. [x] Lua API: `FdtdStudy({ freq_center = 450e6, ... })` - 1 test
+   - FdtdStudyConfig with all simulation parameters
+   - FdtdStudyResult with time samples, resonances, S11, field slice
+   - run_fdtd_study() orchestrates voxelization → simulation
+   - try_run_fdtd_study() in Lua processing pipeline
+6. [x] WebSocket protocol for FDTD results (FDTD\0 header) - 1 test
+   - FdtdStudyResult::to_binary() serialization
+   - Handled in main.rs result receiver
 7. [ ] Renderer: oscilloscope widget for time-domain field display
-8. [ ] Integration test with loop-gap resonator
+8. [ ] Integration test with loop-gap resonator geometry
 
 **Success criteria:** Screenshot shows full Helmholtz system + NanoVNA with FDTD-computed S11 + 2D B-field + oscilloscope at 16 ± 0.5 mT.
 

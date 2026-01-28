@@ -188,6 +188,16 @@
     </div>
   </div>
 
+  <div id="oscilloscope-window" class="tui-window" style="bottom: 420px; right: 20px; width: 320px;">
+    <div class="tui-titlebar">
+      <span>FDTD Oscilloscope</span>
+      <span class="tui-close" onclick="closeWindow('oscilloscope-window')">X</span>
+    </div>
+    <div class="tui-content">
+      <canvas id="oscilloscope-canvas" width="300" height="180"></canvas>
+    </div>
+  </div>
+
   <script>
     function closeWindow(id) {
       document.getElementById(id).classList.remove('visible');

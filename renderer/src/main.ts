@@ -50,6 +50,11 @@ const nanovna_canvas = document.getElementById('nanovna-canvas') as HTMLCanvasEl
 const nanovna_ctx = nanovna_canvas.getContext('2d')!;
 const nanovna_window = document.getElementById('nanovna-window')!;
 
+// Oscilloscope canvas (FDTD time-domain)
+const oscilloscope_canvas = document.getElementById('oscilloscope-canvas') as HTMLCanvasElement;
+const oscilloscope_ctx = oscilloscope_canvas.getContext('2d')!;
+const oscilloscope_window = document.getElementById('oscilloscope-window')!;
+
 declare function openWindow(id: string): void;
 
 // X-ray material (Fresnel-based transparency with vertex colors)
@@ -883,6 +888,196 @@ function draw_nanovna(data: { frequencies: Float32Array, magnitudes: Float32Arra
   ctx.fillText(`MIN: ${data.min_s11_db.toFixed(1)} dB @ ${(data.min_s11_freq / 1e6).toFixed(2)} MHz`, width - 180, 15);
 }
 
+// Parse FDTD study results
+function parse_fdtd_data(buffer: ArrayBuffer) {
+  const view = new DataView(buffer);
+  let offset = 5; // Skip "FDTD\0" header
+
+  // Stats (24 bytes)
+  const grid_size: [number, number, number] = [
+    view.getUint32(offset, true),
+    view.getUint32(offset + 4, true),
+    view.getUint32(offset + 8, true),
+  ];
+  offset += 12;
+  const num_steps = view.getUint32(offset, true); offset += 4;
+  const simulation_time_ns = view.getFloat32(offset, true); offset += 4;
+  const wall_time_ms = view.getUint32(offset, true); offset += 4;
+
+  // Time samples
+  const num_time_samples = view.getUint32(offset, true); offset += 4;
+  const time_samples = new Float32Array(num_time_samples);
+  for (let i = 0; i < num_time_samples; i++) {
+    time_samples[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  // Field samples
+  const num_field_samples = view.getUint32(offset, true); offset += 4;
+  const field_samples = new Float32Array(num_field_samples);
+  for (let i = 0; i < num_field_samples; i++) {
+    field_samples[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  // Resonances
+  const num_resonances = view.getUint32(offset, true); offset += 4;
+  const resonances: { frequency: number, q_factor: number, amplitude: number }[] = [];
+  for (let i = 0; i < num_resonances; i++) {
+    resonances.push({
+      frequency: view.getFloat32(offset, true),
+      q_factor: view.getFloat32(offset + 4, true),
+      amplitude: view.getFloat32(offset + 8, true),
+    });
+    offset += 12;
+  }
+
+  // S11
+  const num_s11 = view.getUint32(offset, true); offset += 4;
+  const s11_freq = new Float32Array(num_s11);
+  const s11_db = new Float32Array(num_s11);
+  for (let i = 0; i < num_s11; i++) {
+    s11_freq[i] = view.getFloat32(offset, true);
+    s11_db[i] = view.getFloat32(offset + 4, true);
+    offset += 8;
+  }
+
+  // Field slice
+  const slice_width = view.getUint32(offset, true); offset += 4;
+  const slice_height = view.getUint32(offset, true); offset += 4;
+  const field_slice = new Float32Array(slice_width * slice_height);
+  for (let i = 0; i < slice_width * slice_height; i++) {
+    field_slice[i] = view.getFloat32(offset, true);
+    offset += 4;
+  }
+
+  return {
+    grid_size,
+    num_steps,
+    simulation_time_ns,
+    wall_time_ms,
+    time_samples,
+    field_samples,
+    resonances,
+    s11_freq,
+    s11_db,
+    field_slice,
+    slice_width,
+    slice_height,
+  };
+}
+
+// Draw FDTD oscilloscope (time-domain field)
+function draw_oscilloscope(data: ReturnType<typeof parse_fdtd_data>) {
+  const ctx = oscilloscope_ctx;
+  const width = oscilloscope_canvas.width;
+  const height = oscilloscope_canvas.height;
+
+  openWindow('oscilloscope-window');
+
+  // Clear
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+  ctx.fillRect(0, 0, width, height);
+
+  if (data.time_samples.length === 0) return;
+
+  const t_min = data.time_samples[0];
+  const t_max = data.time_samples[data.time_samples.length - 1];
+
+  // Find field range
+  let f_min = Infinity;
+  let f_max = -Infinity;
+  for (let i = 0; i < data.field_samples.length; i++) {
+    f_max = Math.max(f_max, data.field_samples[i]);
+    f_min = Math.min(f_min, data.field_samples[i]);
+  }
+  // Make symmetric around zero
+  const f_range = Math.max(Math.abs(f_min), Math.abs(f_max));
+  f_min = -f_range;
+  f_max = f_range;
+  if (f_range === 0) {
+    f_min = -1;
+    f_max = 1;
+  }
+
+  // Draw grid
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  
+  // Vertical grid lines
+  for (let i = 0; i <= 10; i++) {
+    const x = 40 + (i / 10) * (width - 60);
+    ctx.beginPath();
+    ctx.moveTo(x, 10);
+    ctx.lineTo(x, height - 30);
+    ctx.stroke();
+  }
+  
+  // Horizontal grid lines (including zero line)
+  for (let i = 0; i <= 4; i++) {
+    const y = 10 + (i / 4) * (height - 40);
+    ctx.beginPath();
+    ctx.moveTo(40, y);
+    ctx.lineTo(width - 10, y);
+    ctx.stroke();
+  }
+
+  // Draw axes
+  ctx.strokeStyle = '#666';
+  ctx.beginPath();
+  ctx.moveTo(40, 10);
+  ctx.lineTo(40, height - 30);
+  ctx.lineTo(width - 10, height - 30);
+  ctx.stroke();
+
+  // Zero line
+  const zero_y = 10 + ((f_max) / (f_max - f_min)) * (height - 40);
+  ctx.strokeStyle = '#555';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(40, zero_y);
+  ctx.lineTo(width - 10, zero_y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Draw field trace (phosphor green)
+  ctx.strokeStyle = '#0f0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+
+  for (let i = 0; i < data.time_samples.length; i++) {
+    const x = 40 + ((data.time_samples[i] - t_min) / (t_max - t_min)) * (width - 60);
+    const y = 10 + ((f_max - data.field_samples[i]) / (f_max - f_min)) * (height - 40);
+
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+
+  // Labels
+  ctx.fillStyle = '#888';
+  ctx.font = '10px "Courier New", monospace';
+  ctx.fillText('Ez (a.u.)', 5, 15);
+  ctx.fillText('Time (ns)', width - 70, height - 5);
+  ctx.fillText(`${t_min.toFixed(0)}`, 35, height - 15);
+  ctx.fillText(`${t_max.toFixed(0)}`, width - 40, height - 15);
+
+  // Stats
+  ctx.fillStyle = '#0f0';
+  ctx.fillText(`Grid: ${data.grid_size[0]}×${data.grid_size[1]}×${data.grid_size[2]}`, 50, 15);
+  ctx.fillText(`Steps: ${data.num_steps}`, 150, 15);
+  ctx.fillText(`Wall: ${data.wall_time_ms}ms`, 220, 15);
+
+  // Resonances
+  if (data.resonances.length > 0) {
+    ctx.fillStyle = '#ff0';
+    ctx.fillText(`Res: ${(data.resonances[0].frequency / 1e6).toFixed(2)} MHz (Q=${data.resonances[0].q_factor.toFixed(0)})`, 50, height - 5);
+  }
+}
+
 // Parse circuit data
 function parse_circuit_data(buffer: ArrayBuffer) {
   const view = new DataView(buffer);
@@ -957,6 +1152,14 @@ function update_mesh(buffer: ArrayBuffer) {
     const nanovna_data = parse_nanovna_data(buffer);
     console.log(`NanoVNA data: ${nanovna_data.num_points} points, min S11: ${nanovna_data.min_s11_db.toFixed(1)} dB @ ${(nanovna_data.min_s11_freq / 1e6).toFixed(2)} MHz`);
     draw_nanovna(nanovna_data);
+    return;
+  }
+
+  // Handle FDTD study results
+  if (header_5 === 'FDTD\0') {
+    const fdtd_data = parse_fdtd_data(buffer);
+    console.log(`FDTD data: ${fdtd_data.grid_size[0]}x${fdtd_data.grid_size[1]}x${fdtd_data.grid_size[2]} grid, ${fdtd_data.num_steps} steps, ${fdtd_data.resonances.length} resonances`);
+    draw_oscilloscope(fdtd_data);
     return;
   }
 
