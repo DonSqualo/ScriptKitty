@@ -7,7 +7,7 @@ Build and development notes for Claude agents.
 ### Server (Rust)
 ```bash
 cd server
-cargo test        # Run tests (60 tests across all modules)
+cargo test        # Run tests (66 tests across all modules)
 cargo build       # Debug build
 cargo build --release  # Release build
 ```
@@ -51,6 +51,19 @@ The server watches the Lua file for changes and pushes updates via WebSocket to 
 ### Helmholtz Field Computation
 The server pattern-matches for `helmholtz` or `coil_mean_radius` in Lua content to trigger Biot-Savart computation. Config is read from the `Coil` and `Wire` global tables (project convention).
 
+### FDTD Electromagnetic Simulation
+Pure Rust implementation of the Yee FDTD algorithm in `server/src/fdtd.rs`:
+- 3D staggered grid (E on edges, H on faces)
+- Leapfrog time-stepping with CFL-stable dt
+- CPML absorbing boundary coefficients
+- Gaussian pulse sources for broadband excitation
+- Resonance detection via FFT peak finding
+
+### Voxelization
+`server/src/voxel.rs` converts triangle meshes to 3D grids:
+- Ray-casting point-in-mesh test
+- Material ID assignment per voxel
+
 ### Binary Protocols
 - Mesh data: `[num_vertices:u32][num_indices:u32][positions][normals][colors][indices]`
 - Field data: Header `FIELD\0\0\0`, then slice dims, bounds, Bx, Bz, magnitude, arrows, line data
@@ -65,6 +78,22 @@ The server pattern-matches for `helmholtz` or `coil_mean_radius` in Lua content 
 - `server/src/export.rs` - 5 tests for STL/3MF export
 - `server/src/field.rs` - 7 tests for magnetic field computation
 - `server/src/acoustic.rs` - 8 tests for acoustic field computation
-- `server/src/nanovna.rs` - 7 tests for NanoVNA S11 simulation
-- `server/src/circuit.rs` - 18 tests for circuit SVG generation
-- `server/src/geometry.rs` - 4 tests for mesh validation
+- `server/src/nanovna.rs` - 12 tests for NanoVNA S11 simulation
+- `server/src/circuit.rs` - 21 tests for circuit SVG + AC analysis
+- `server/src/geometry.rs` - 7 tests for mesh validation
+- `server/src/fdtd.rs` - 5 tests for FDTD solver
+- `server/src/voxel.rs` - 1 test for voxelization
+
+## Taking Screenshots
+
+For visual testing on headless servers, use the Vast.ai GPU instance:
+```bash
+# Quick screenshot (auto-creates/finds instance)
+~/clawd/Mittens/scripts/vast-screenshot.sh
+
+# Restart services first (for TS/Rust changes)
+~/clawd/Mittens/scripts/vast-screenshot.sh --restart
+
+# Custom output name
+~/clawd/Mittens/scripts/vast-screenshot.sh my_feature.png
+```
