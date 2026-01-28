@@ -1399,7 +1399,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "clap",
+ "flate2",
  "futures",
  "manifold3d",
  "mlua",

@@ -1093,7 +1093,7 @@ function update_status(state: 'connecting' | 'connected' | 'disconnected' | 'err
 
 // WebSocket
 function connect_websocket() {
-  const ws = new WebSocket(`ws://${window.location.hostname}:3001/ws`);
+  const ws = new WebSocket(`ws://${window.location.host}/ws`);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {

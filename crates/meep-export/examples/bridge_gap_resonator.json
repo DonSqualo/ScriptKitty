@@ -1,0 +1,57 @@
+{
+  "objects": [
+    {
+      "type": "group",
+      "name": "resonator",
+      "ops": [],
+      "children": [
+        {
+          "type": "box",
+          "name": "left_pad",
+          "params": {"w": 25.0, "d": 8.0, "h": 0.5},
+          "ops": [{"op": "translate", "x": -13.75, "y": 0, "z": 0.25}],
+          "material": {"name": "copper"}
+        },
+        {
+          "type": "box",
+          "name": "right_pad",
+          "params": {"w": 25.0, "d": 8.0, "h": 0.5},
+          "ops": [{"op": "translate", "x": 13.75, "y": 0, "z": 0.25}],
+          "material": {"name": "copper"}
+        },
+        {
+          "type": "box",
+          "name": "bridge",
+          "params": {"w": 6.5, "d": 4.8, "h": 0.25},
+          "ops": [{"op": "translate", "x": 0, "y": 0, "z": 0.625}],
+          "material": {"name": "copper"}
+        },
+        {
+          "type": "csg",
+          "operation": "difference",
+          "name": "tube",
+          "ops": [{"op": "translate", "x": 0, "y": 0, "z": -4.8}],
+          "children": [
+            {
+              "type": "cylinder",
+              "name": "tube_outer",
+              "params": {"r": 15.0, "h": 9.6},
+              "ops": [],
+              "material": {"name": "FR4", "permittivity": 4.4, "loss_tangent": 0.02}
+            },
+            {
+              "type": "cylinder",
+              "name": "tube_inner",
+              "params": {"r": 13.0, "h": 10.0},
+              "ops": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "physics": {
+    "type": "frequency_domain",
+    "frequencies": [1e9, 10e9]
+  }
+}

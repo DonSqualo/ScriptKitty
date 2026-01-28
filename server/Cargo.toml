@@ -37,6 +37,10 @@ manifold3d = "0.0.6"
 # 3MF export (ZIP with XML)
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
+# Compression for voxel data
+flate2 = "1.0"
+base64 = "0.22"
+
 [profile.release]
 lto = true
 codegen-units = 1

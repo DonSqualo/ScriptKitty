@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::os::raw::c_void;
 
 /// Mesh data for WebSocket transfer
+#[derive(Clone)]
 pub struct MeshData {
     pub positions: Vec<f32>,
     pub normals: Vec<f32>,

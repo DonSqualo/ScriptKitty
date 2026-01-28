@@ -28,6 +28,10 @@ local config = {
   substrate_d = 60,  -- substrate depth
   substrate_h = 9.6, -- PCB substrate thickness
 
+  -- Electromagnetic simulation (triggers MEEP export)
+  freq_start = 1e9,  -- 1 GHz
+  freq_stop = 10e9,  -- 10 GHz
+
   -- Resonance coil parameters
   coil = {
     turns = 5,

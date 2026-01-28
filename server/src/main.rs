@@ -10,7 +10,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
-    response::IntoResponse,
+    http::header,
+    response::{IntoResponse, Response},
     routing::get,
     Router,
 };
@@ -26,7 +27,9 @@ mod circuit;
 mod export;
 mod field;
 mod geometry;
+mod meep;
 mod nanovna;
+mod voxel;
 
 struct AppState {
     mesh_tx: broadcast::Sender<Vec<u8>>,
@@ -34,6 +37,8 @@ struct AppState {
     current_field: RwLock<Option<Vec<u8>>>,
     current_circuit: RwLock<Option<Vec<u8>>>,
     current_nanovna: RwLock<Option<Vec<u8>>>,
+    current_meep_script: RwLock<Option<String>>,
+    current_meep_voxel: RwLock<Option<String>>,
 }
 
 #[tokio::main]
@@ -60,15 +65,19 @@ async fn main() -> Result<()> {
         current_field: RwLock::new(None),
         current_circuit: RwLock::new(None),
         current_nanovna: RwLock::new(None),
+        current_meep_script: RwLock::new(None),
+        current_meep_voxel: RwLock::new(None),
     });
 
-    // Handle mesh/field/circuit/nanovna results
+    // Handle mesh/field/circuit/nanovna/meep results
     let state_clone = state.clone();
     tokio::spawn(async move {
         while let Some(data) = result_rx.recv().await {
             let is_field = data.len() >= 5 && &data[0..5] == b"FIELD";
             let is_circuit = data.len() >= 8 && &data[0..8] == b"CIRCUIT\0";
             let is_nanovna = data.len() >= 8 && &data[0..8] == b"NANOVNA\0";
+            let is_meep = (data.len() >= 5 && &data[0..5] == b"MEEP\0") || 
+                          (data.len() >= 6 && &data[0..6] == b"MEEPV\0");
 
             if is_field {
                 *state_clone.current_field.write().await = Some(data.clone());
@@ -76,6 +85,18 @@ async fn main() -> Result<()> {
                 *state_clone.current_circuit.write().await = Some(data.clone());
             } else if is_nanovna {
                 *state_clone.current_nanovna.write().await = Some(data.clone());
+            } else if is_meep {
+                // MEEP script is stored as UTF-8 string after the header
+                // Check for voxel variant (MEEPV header)
+                let is_voxel = data.len() >= 6 && &data[0..6] == b"MEEPV\0";
+                if is_voxel {
+                    if let Ok(script) = String::from_utf8(data[6..].to_vec()) {
+                        *state_clone.current_meep_voxel.write().await = Some(script);
+                    }
+                } else if let Ok(script) = String::from_utf8(data[5..].to_vec()) {
+                    *state_clone.current_meep_script.write().await = Some(script);
+                }
+                continue; // Don't broadcast MEEP to WebSocket clients
             } else {
                 *state_clone.current_mesh.write().await = Some(data.clone());
             }
@@ -99,6 +120,8 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        .route("/meep", get(meep_handler))
+        .route("/meep/voxel", get(meep_voxel_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -111,6 +134,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 struct CameraState {
     position: [f32; 3],
     target: [f32; 3],
@@ -161,10 +185,10 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
         let base_dir = file_path.parent().unwrap_or(std::path::Path::new("."));
 
         // Process mesh and exports
-        match process_single_file(&lua, &content, base_dir) {
+        let process_result = match process_single_file(&lua, &content, base_dir) {
             Ok(result) => {
-                // Send view config first
-                let view_binary = serialize_view_config(result.flat_shading, result.camera);
+                // Send view config first (clone camera to avoid move)
+                let view_binary = serialize_view_config(result.flat_shading, result.camera.clone());
                 let _ = tx.send(view_binary);
 
                 let binary = result.mesh.to_binary();
@@ -176,9 +200,13 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
                     result.flat_shading
                 );
                 let _ = tx.send(binary);
+                Some(result)
             }
-            Err(e) => error!("Lua error: {}", e),
-        }
+            Err(e) => {
+                error!("Lua error: {}", e);
+                None
+            }
+        };
 
         // Try to compute magnetic field if this looks like a Helmholtz coil
         if let Some(field_data) = try_compute_helmholtz_field(&lua, &content) {
@@ -260,7 +288,75 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
             );
             let _ = tx.send(sweep_binary);
         }
+
+        // Generate MEEP FDTD script if electromagnetic setup is present
+        if let Some(script) = meep::try_generate_meep_script(&lua, &content) {
+            let mut meep_binary = Vec::with_capacity(5 + script.len());
+            meep_binary.extend_from_slice(b"MEEP\0");
+            meep_binary.extend_from_slice(script.as_bytes());
+            info!(
+                "Generated MEEP script: {} bytes, available at /meep",
+                script.len()
+            );
+            let _ = tx.send(meep_binary);
+        }
+
+        // Generate voxelized MEEP script if voxel_size is configured
+        if let Some(ref result) = process_result {
+            if let Some(script) = try_generate_voxel_meep(&lua, &content, result) {
+                let mut meep_binary = Vec::with_capacity(6 + script.len());
+                meep_binary.extend_from_slice(b"MEEPV\0");
+                meep_binary.extend_from_slice(script.as_bytes());
+                info!(
+                    "Generated voxelized MEEP script: {} bytes, available at /meep/voxel",
+                    script.len()
+                );
+                let _ = tx.send(meep_binary);
+            }
+        }
     }
+}
+
+/// Try to generate voxelized MEEP script from scene
+fn try_generate_voxel_meep(lua: &mlua::Lua, content: &str, result: &ProcessResult) -> Option<String> {
+    // Check for voxel_size in config
+    if !content.contains("voxel_size") {
+        return None;
+    }
+
+    let globals = lua.globals();
+    let config: mlua::Table = globals.get("config").ok()?;
+    let voxel_size: f64 = config.get("voxel_size").ok()?;
+
+    // Get frequency config
+    let freq_start: f64 = config.get("freq_start").unwrap_or(1e9);
+    let freq_stop: f64 = config.get("freq_stop").unwrap_or(10e9);
+
+    // Convert mesh to voxel grid
+    // For now, treat the entire mesh as a single material (PEC)
+    // TODO: Per-object materials from scene
+    let material = voxel::VoxelMaterial::pec();
+
+    let meshes: Vec<(geometry::MeshData, voxel::VoxelMaterial)> = vec![(result.mesh.clone(), material)];
+    let grid = voxel::voxelize_scene(&meshes, voxel_size, voxel_size * 2.0);
+
+    // Configure MEEP
+    let fcen = (freq_start + freq_stop) / 2.0 * 1e-3 / 3e8;  // Convert to MEEP units (mm)
+    let fwidth = (freq_stop - freq_start) * 1e-3 / 3e8;
+
+    let meep_config = voxel::MeepConfig {
+        resolution: 1.0 / voxel_size * 10.0,  // ~10 points per voxel
+        pml_thickness: voxel_size * 5.0,
+        fcen,
+        fwidth,
+    };
+
+    info!(
+        "Voxelizing scene: {}x{}x{} grid, voxel_size={:.2}mm",
+        grid.nx, grid.ny, grid.nz, voxel_size
+    );
+
+    Some(grid.to_meep_script(&meep_config))
 }
 
 fn parse_plane_type(plane_str: &str) -> field::PlaneType {
@@ -1068,6 +1164,48 @@ async fn watch_file(path: PathBuf, tx: mpsc::UnboundedSender<(String, PathBuf)>)
                 info!("File changed, regenerating mesh...");
                 let _ = tx.send((content, path.clone()));
             }
+        }
+    }
+}
+
+/// HTTP handler for MEEP script export (primitive-based)
+async fn meep_handler(State(state): State<Arc<AppState>>) -> Response {
+    let script = state.current_meep_script.read().await;
+    match script.as_ref() {
+        Some(content) => {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/x-python; charset=utf-8")
+                .header(header::CONTENT_DISPOSITION, "inline; filename=\"simulation.py\"")
+                .body(content.clone().into())
+                .unwrap()
+        }
+        None => {
+            Response::builder()
+                .status(404)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body("No MEEP script generated yet. Add freq_start to your config.".into())
+                .unwrap()
+        }
+    }
+}
+
+/// HTTP handler for voxelized MEEP script export
+async fn meep_voxel_handler(State(state): State<Arc<AppState>>) -> Response {
+    let script = state.current_meep_voxel.read().await;
+    match script.as_ref() {
+        Some(content) => {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/x-python; charset=utf-8")
+                .header(header::CONTENT_DISPOSITION, "inline; filename=\"simulation_voxel.py\"")
+                .body(content.clone().into())
+                .unwrap()
+        }
+        None => {
+            Response::builder()
+                .status(404)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body("No voxelized MEEP script generated yet. Add voxel_size to your config.".into())
+                .unwrap()
         }
     }
 }
