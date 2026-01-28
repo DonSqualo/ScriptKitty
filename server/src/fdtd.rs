@@ -15,11 +15,250 @@
 use std::f64::consts::PI;
 
 /// Speed of light in vacuum (m/s)
-const C0: f64 = 299_792_458.0;
+pub const C0: f64 = 299_792_458.0;
 /// Permittivity of free space (F/m)
-const EPS0: f64 = 8.854_187_817e-12;
+pub const EPS0: f64 = 8.854_187_817e-12;
 /// Permeability of free space (H/m)
-const MU0: f64 = 1.256_637_062e-6;
+pub const MU0: f64 = 1.256_637_062e-6;
+
+/// Configuration for an FDTD electromagnetic study
+#[derive(Debug, Clone)]
+pub struct FdtdStudyConfig {
+    /// Center frequency (Hz)
+    pub freq_center: f64,
+    /// Frequency width (Hz) for broadband pulse
+    pub freq_width: f64,
+    /// Voxel/cell size (mm)
+    pub cell_size: f64,
+    /// PML thickness in cells
+    pub pml_thickness: usize,
+    /// Maximum simulation time (ns)
+    pub max_time_ns: f64,
+    /// Source position relative to geometry center (mm)
+    pub source_offset: [f64; 3],
+    /// Monitor position relative to geometry center (mm)
+    pub monitor_offset: [f64; 3],
+    /// Which field plane to capture for visualization
+    pub field_plane: FieldPlane,
+}
+
+impl Default for FdtdStudyConfig {
+    fn default() -> Self {
+        Self {
+            freq_center: 450e6,      // 450 MHz
+            freq_width: 200e6,       // 200 MHz bandwidth
+            cell_size: 1.0,          // 1mm cells
+            pml_thickness: 8,
+            max_time_ns: 100.0,      // 100 ns max
+            source_offset: [0.0, 0.0, 0.0],
+            monitor_offset: [0.0, 0.0, 0.0],
+            field_plane: FieldPlane::XZ(0),
+        }
+    }
+}
+
+/// Results from an FDTD study
+#[derive(Debug, Clone)]
+pub struct FdtdStudyResult {
+    /// Time samples (ns)
+    pub time_samples: Vec<f64>,
+    /// Field values at monitor point
+    pub field_samples: Vec<f64>,
+    /// Detected resonances
+    pub resonances: Vec<ResonanceResult>,
+    /// S11 frequency sweep (freq_Hz, dB)
+    pub s11: Vec<(f64, f64)>,
+    /// 2D field slice for visualization
+    pub field_slice: Vec<f64>,
+    /// Field slice dimensions
+    pub slice_dims: (usize, usize),
+    /// Simulation statistics
+    pub stats: FdtdStats,
+}
+
+/// FDTD simulation statistics
+#[derive(Debug, Clone)]
+pub struct FdtdStats {
+    pub grid_size: [usize; 3],
+    pub num_steps: usize,
+    pub simulation_time_ns: f64,
+    pub wall_time_ms: u64,
+}
+
+impl FdtdStudyResult {
+    /// Serialize to binary format for WebSocket transmission
+    /// Format: "FDTD\0" + header + data
+    pub fn to_binary(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8192);
+        
+        // Header
+        buf.extend_from_slice(b"FDTD\0");
+        
+        // Stats (24 bytes)
+        buf.extend_from_slice(&(self.stats.grid_size[0] as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.stats.grid_size[1] as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.stats.grid_size[2] as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.stats.num_steps as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.stats.simulation_time_ns as f32).to_le_bytes());
+        buf.extend_from_slice(&(self.stats.wall_time_ms as u32).to_le_bytes());
+        
+        // Time samples
+        buf.extend_from_slice(&(self.time_samples.len() as u32).to_le_bytes());
+        for &t in &self.time_samples {
+            buf.extend_from_slice(&(t as f32).to_le_bytes());
+        }
+        
+        // Field samples
+        buf.extend_from_slice(&(self.field_samples.len() as u32).to_le_bytes());
+        for &f in &self.field_samples {
+            buf.extend_from_slice(&(f as f32).to_le_bytes());
+        }
+        
+        // Resonances
+        buf.extend_from_slice(&(self.resonances.len() as u32).to_le_bytes());
+        for res in &self.resonances {
+            buf.extend_from_slice(&(res.frequency as f32).to_le_bytes());
+            buf.extend_from_slice(&(res.q_factor as f32).to_le_bytes());
+            buf.extend_from_slice(&(res.amplitude as f32).to_le_bytes());
+        }
+        
+        // S11
+        buf.extend_from_slice(&(self.s11.len() as u32).to_le_bytes());
+        for &(freq, db) in &self.s11 {
+            buf.extend_from_slice(&(freq as f32).to_le_bytes());
+            buf.extend_from_slice(&(db as f32).to_le_bytes());
+        }
+        
+        // Field slice
+        buf.extend_from_slice(&(self.slice_dims.0 as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.slice_dims.1 as u32).to_le_bytes());
+        for &val in &self.field_slice {
+            buf.extend_from_slice(&(val as f32).to_le_bytes());
+        }
+        
+        buf
+    }
+}
+
+/// Run FDTD study on a voxel grid
+pub fn run_fdtd_study(grid: &crate::voxel::VoxelGrid, config: &FdtdStudyConfig) -> FdtdStudyResult {
+    use std::time::Instant;
+    let start = Instant::now();
+    
+    // Convert cell size from mm to m
+    let cell_size_m = config.cell_size * 1e-3;
+    
+    // Create FDTD simulation from voxel grid
+    let mut sim = FdtdSimulation::from_voxel_grid(grid, config.pml_thickness);
+    
+    // Set total simulation time
+    let max_time_s = config.max_time_ns * 1e-9;
+    sim.config.total_time = max_time_s;
+    
+    // Calculate source and monitor positions (center of grid + offset)
+    let center = [
+        sim.config.nx / 2,
+        sim.config.ny / 2,
+        sim.config.nz / 2,
+    ];
+    
+    let source_pos = [
+        (center[0] as f64 + config.source_offset[0] / config.cell_size) as usize,
+        (center[1] as f64 + config.source_offset[1] / config.cell_size) as usize,
+        (center[2] as f64 + config.source_offset[2] / config.cell_size) as usize,
+    ];
+    
+    let monitor_pos = [
+        (center[0] as f64 + config.monitor_offset[0] / config.cell_size) as usize,
+        (center[1] as f64 + config.monitor_offset[1] / config.cell_size) as usize,
+        (center[2] as f64 + config.monitor_offset[2] / config.cell_size) as usize,
+    ];
+    
+    // Add Gaussian pulse source
+    sim.add_source(Source::GaussianPulse {
+        fcen: config.freq_center,
+        fwidth: config.freq_width,
+        amplitude: 1.0,
+        position: [
+            source_pos[0].min(sim.config.nx - 1),
+            source_pos[1].min(sim.config.ny - 1),
+            source_pos[2].min(sim.config.nz - 1),
+        ],
+        component: Component::Ez,
+    });
+    
+    // Add monitor
+    let monitor_idx = sim.add_monitor(
+        [
+            monitor_pos[0].min(sim.config.nx - 1),
+            monitor_pos[1].min(sim.config.ny - 1),
+            monitor_pos[2].min(sim.config.nz - 1),
+        ],
+        Component::Ez,
+    );
+    
+    // Run simulation
+    let max_steps = sim.config.num_steps().min(100_000); // Cap at 100k steps
+    sim.run_until_decay(monitor_idx, 0.01, max_steps);
+    
+    let wall_time = start.elapsed();
+    
+    // Extract results
+    let samples = sim.get_monitor_samples(monitor_idx).unwrap_or(&[]);
+    let dt = sim.config.dt;
+    
+    let time_samples: Vec<f64> = (0..samples.len())
+        .map(|i| i as f64 * dt * 1e9) // Convert to ns
+        .collect();
+    let field_samples: Vec<f64> = samples.to_vec();
+    
+    // Find resonances
+    let resonances = find_resonances(
+        samples,
+        dt,
+        config.freq_center - config.freq_width,
+        config.freq_center + config.freq_width,
+    );
+    
+    // Compute S11 (using monitor as both incident and reflected for now)
+    // In a proper setup, we'd have separate incident and reflected monitors
+    let s11 = compute_s11(samples, samples, dt);
+    
+    // Get field slice at the specified plane
+    let plane_idx = match config.field_plane {
+        FieldPlane::XY(k) => k.min(sim.config.nz - 1),
+        FieldPlane::XZ(j) => j.min(sim.config.ny - 1),
+        FieldPlane::YZ(i) => i.min(sim.config.nx - 1),
+    };
+    
+    let adjusted_plane = match config.field_plane {
+        FieldPlane::XY(_) => FieldPlane::XY(center[2]),
+        FieldPlane::XZ(_) => FieldPlane::XZ(center[1]),
+        FieldPlane::YZ(_) => FieldPlane::YZ(center[0]),
+    };
+    
+    let field_slice = sim.get_field_slice(adjusted_plane, Component::Ez);
+    let slice_dims = match adjusted_plane {
+        FieldPlane::XY(_) => (sim.config.nx, sim.config.ny),
+        FieldPlane::XZ(_) => (sim.config.nx, sim.config.nz),
+        FieldPlane::YZ(_) => (sim.config.ny, sim.config.nz),
+    };
+    
+    FdtdStudyResult {
+        time_samples,
+        field_samples,
+        resonances,
+        s11,
+        field_slice,
+        slice_dims,
+        stats: FdtdStats {
+            grid_size: [sim.config.nx, sim.config.ny, sim.config.nz],
+            num_steps: sim.time_step,
+            simulation_time_ns: sim.current_time() * 1e9,
+            wall_time_ms: wall_time.as_millis() as u64,
+        },
+    }
+}
 
 /// Material properties at a grid point
 #[derive(Debug, Clone, Copy)]
@@ -1208,6 +1447,37 @@ mod tests {
         // b should approach 1 at the interior interface
         let interface_idx = config.pml.thickness;
         assert!(sim.cpml_x.b[interface_idx].abs() < 0.1, "b at interface should be small");
+    }
+
+    #[test]
+    fn test_fdtd_study_result_serialization() {
+        // Create a minimal study result
+        let result = FdtdStudyResult {
+            time_samples: vec![0.0, 0.1, 0.2],
+            field_samples: vec![0.0, 1.0, 0.5],
+            resonances: vec![ResonanceResult {
+                frequency: 450e6,
+                q_factor: 100.0,
+                amplitude: 1.0,
+            }],
+            s11: vec![(400e6, -3.0), (450e6, -20.0), (500e6, -5.0)],
+            field_slice: vec![0.0, 0.1, 0.2, 0.3],
+            slice_dims: (2, 2),
+            stats: FdtdStats {
+                grid_size: [20, 20, 20],
+                num_steps: 1000,
+                simulation_time_ns: 10.0,
+                wall_time_ms: 500,
+            },
+        };
+        
+        let binary = result.to_binary();
+        
+        // Check header
+        assert_eq!(&binary[0..5], b"FDTD\0");
+        
+        // Check it's a reasonable size
+        assert!(binary.len() > 100, "Binary should contain data");
     }
 
     #[test]

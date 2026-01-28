@@ -38,6 +38,7 @@ struct AppState {
     current_field: RwLock<Option<Vec<u8>>>,
     current_circuit: RwLock<Option<Vec<u8>>>,
     current_nanovna: RwLock<Option<Vec<u8>>>,
+    current_fdtd: RwLock<Option<Vec<u8>>>,
     current_meep_script: RwLock<Option<String>>,
     current_meep_voxel: RwLock<Option<String>>,
 }
@@ -66,6 +67,7 @@ async fn main() -> Result<()> {
         current_field: RwLock::new(None),
         current_circuit: RwLock::new(None),
         current_nanovna: RwLock::new(None),
+        current_fdtd: RwLock::new(None),
         current_meep_script: RwLock::new(None),
         current_meep_voxel: RwLock::new(None),
     });
@@ -77,6 +79,7 @@ async fn main() -> Result<()> {
             let is_field = data.len() >= 5 && &data[0..5] == b"FIELD";
             let is_circuit = data.len() >= 8 && &data[0..8] == b"CIRCUIT\0";
             let is_nanovna = data.len() >= 8 && &data[0..8] == b"NANOVNA\0";
+            let is_fdtd = data.len() >= 5 && &data[0..5] == b"FDTD\0";
             let is_meep = (data.len() >= 5 && &data[0..5] == b"MEEP\0") || 
                           (data.len() >= 6 && &data[0..6] == b"MEEPV\0");
 
@@ -86,6 +89,8 @@ async fn main() -> Result<()> {
                 *state_clone.current_circuit.write().await = Some(data.clone());
             } else if is_nanovna {
                 *state_clone.current_nanovna.write().await = Some(data.clone());
+            } else if is_fdtd {
+                *state_clone.current_fdtd.write().await = Some(data.clone());
             } else if is_meep {
                 // MEEP script is stored as UTF-8 string after the header
                 // Check for voxel variant (MEEPV header)
@@ -288,6 +293,20 @@ fn process_lua_files(mut rx: mpsc::UnboundedReceiver<(String, PathBuf)>, tx: mps
                 sweep_binary.len()
             );
             let _ = tx.send(sweep_binary);
+        }
+
+        // Run FDTD electromagnetic study if configured
+        if let Some(ref result) = process_result {
+            if let Some(fdtd_result) = try_run_fdtd_study(&lua, &content, &result.mesh) {
+                let fdtd_binary = fdtd_result.to_binary();
+                info!(
+                    "Generated FDTD result: {} bytes, {} time samples, {} resonances",
+                    fdtd_binary.len(),
+                    fdtd_result.time_samples.len(),
+                    fdtd_result.resonances.len()
+                );
+                let _ = tx.send(fdtd_binary);
+            }
         }
 
         // Generate MEEP FDTD script if electromagnetic setup is present
@@ -988,6 +1007,107 @@ fn try_compute_nanovna_sweep(lua: &mlua::Lua, content: &str) -> Option<nanovna::
     );
 
     Some(sweep)
+}
+
+/// Process FDTD electromagnetic study if configured
+fn try_run_fdtd_study(lua: &mlua::Lua, content: &str, mesh: &geometry::MeshData) -> Option<fdtd::FdtdStudyResult> {
+    if !content.contains("FdtdStudy") && !content.contains("fdtd") {
+        return None;
+    }
+
+    let _result: mlua::Value = lua.load(content).eval().ok()?;
+    let globals = lua.globals();
+
+    // Look for FdtdStudy table or fdtd config
+    let fdtd_table: mlua::Table = globals.get("FdtdStudy")
+        .or_else(|_| globals.get("fdtd"))
+        .ok()?;
+
+    // Extract configuration
+    let freq_center: f64 = fdtd_table.get("freq_center").unwrap_or(450e6);
+    let freq_width: f64 = fdtd_table.get("freq_width").unwrap_or(200e6);
+    let cell_size: f64 = fdtd_table.get("cell_size").unwrap_or(1.0);
+    let pml_thickness: usize = fdtd_table.get::<_, u32>("pml_thickness").unwrap_or(8) as usize;
+    let max_time_ns: f64 = fdtd_table.get("max_time_ns").unwrap_or(100.0);
+
+    // Source offset
+    let source_offset = if let Ok(src) = fdtd_table.get::<_, mlua::Table>("source_offset") {
+        [
+            src.get(1).unwrap_or(0.0),
+            src.get(2).unwrap_or(0.0),
+            src.get(3).unwrap_or(0.0),
+        ]
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+
+    // Monitor offset
+    let monitor_offset = if let Ok(mon) = fdtd_table.get::<_, mlua::Table>("monitor_offset") {
+        [
+            mon.get(1).unwrap_or(0.0),
+            mon.get(2).unwrap_or(0.0),
+            mon.get(3).unwrap_or(0.0),
+        ]
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+
+    // Field plane
+    let field_plane = if let Ok(plane_str) = fdtd_table.get::<_, String>("field_plane") {
+        match plane_str.to_uppercase().as_str() {
+            "XY" => fdtd::FieldPlane::XY(0),
+            "YZ" => fdtd::FieldPlane::YZ(0),
+            _ => fdtd::FieldPlane::XZ(0),
+        }
+    } else {
+        fdtd::FieldPlane::XZ(0)
+    };
+
+    let config = fdtd::FdtdStudyConfig {
+        freq_center,
+        freq_width,
+        cell_size,
+        pml_thickness,
+        max_time_ns,
+        source_offset,
+        monitor_offset,
+        field_plane,
+    };
+
+    info!(
+        "Running FDTD study: f_center={:.1} MHz, cell_size={:.2} mm, max_time={:.1} ns",
+        freq_center / 1e6, cell_size, max_time_ns
+    );
+
+    // Convert mesh to voxel grid
+    let material = voxel::VoxelMaterial::pec();
+    let meshes: Vec<(geometry::MeshData, voxel::VoxelMaterial)> = vec![(mesh.clone(), material)];
+    let grid = voxel::voxelize_scene(&meshes, cell_size * 1e-3, cell_size * 2e-3);
+
+    info!(
+        "Voxelized to {}x{}x{} grid ({} voxels)",
+        grid.nx, grid.ny, grid.nz, grid.nx * grid.ny * grid.nz
+    );
+
+    // Run FDTD simulation
+    let result = fdtd::run_fdtd_study(&grid, &config);
+
+    info!(
+        "FDTD complete: {} steps in {} ms, {} resonances found",
+        result.stats.num_steps,
+        result.stats.wall_time_ms,
+        result.resonances.len()
+    );
+
+    if !result.resonances.is_empty() {
+        info!(
+            "  Primary resonance: {:.2} MHz (Q={:.0})",
+            result.resonances[0].frequency / 1e6,
+            result.resonances[0].q_factor
+        );
+    }
+
+    Some(result)
 }
 
 fn try_generate_circuit(lua: &mlua::Lua, content: &str) -> Option<circuit::CircuitData> {
